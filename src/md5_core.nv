@@ -1,0 +1,192 @@
+// src/md5_core.nv — MD5 (RFC 1321).
+//
+// LEGACY — FOR INTEROPERABILITY ONLY.
+//
+// MD5 is BROKEN.  Collisions have been produced by hand since 2004 and
+// take seconds now; chosen-prefix collisions are routine.  Treat a
+// matching MD5 as evidence of nothing.  It is here because file
+// listings, package indexes and old protocols still publish MD5 sums
+// and reading them needs an implementation — and because RFC 2202's
+// HMAC-MD5 vectors are still the ones some test suites carry.  Use
+// `sha256` for anything new.
+//
+// A 128-bit digest over 512-bit blocks, 64 rounds — and, unlike every
+// other hash here, LITTLE-endian in both directions: the block is read
+// least-significant byte first and so is the digest (RFC 1321 §3.4).
+
+use std.bits
+use word
+
+// This module is the half of MD5 that runs on a device: the
+// state, its initial value, and the compression function.  It
+// imports `word` and nothing else, and every function in it is
+// `@tier(embedded)` — which is what lets it be cross-compiled
+// on its own, with `hashing` and its `Bytes` left behind on the
+// host.
+
+
+// The MD5 state: four chaining words (RFC 1321 §3.3) and the number of
+// bytes absorbed.
+pub @value
+struct Md5
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    len: Int
+
+// The four auxiliary functions of RFC 1321 §3.4, one per round block.
+@tier(embedded)
+fn f_fn(x: Int, y: Int, z: Int) -> Int
+    bits.bor(bits.band(x, y), bits.band(word.mask32(bits.bnot(x)), z))
+
+@tier(embedded)
+fn g_fn(x: Int, y: Int, z: Int) -> Int
+    bits.bor(bits.band(x, z), bits.band(y, word.mask32(bits.bnot(z))))
+
+@tier(embedded)
+fn h_fn(x: Int, y: Int, z: Int) -> Int
+    bits.xor(bits.xor(x, y), z)
+
+@tier(embedded)
+fn i_fn(x: Int, y: Int, z: Int) -> Int
+    bits.xor(y, bits.bor(x, word.mask32(bits.bnot(z))))
+
+// One round.
+//
+// RFC 1321 writes it as `a = b + ROTL(a + f + K + M, s)`, with the
+// four variables rotating by one position each round; the rotation is
+// done by the caller naming them in the new order.
+@tier(embedded)
+fn step(a: Int, b: Int, f: Int, k: Int, m: Int, s: Int) -> Int
+    word.mask32(b + word.rotl32(word.mask32(a + f + k + m), s))
+
+
+// Absorb one 512-bit block.
+//
+// Sixty-four rounds written out, each naming the message word it uses
+// and the rotation it applies.  MD5's word order is a permutation
+// rather than a schedule — there is nothing to compute, only an index
+// per round — so the line carries it directly (RFC 1321 §3.4).
+//
+// This is PUBLIC, and it is the entry point for a caller that has no
+// `Bytes` to give: everything it touches — `@value` structs, inline
+// arrays, `bits.*`, `int.wrapping_add`, bounded `for` — is admitted at
+// `@tier(embedded)`, so firmware holding a block in a `static [u8; N]`
+// can drive the hash with the heap untouched.  `update` and `finish`
+// are the same function with the buffer handling that the host tier
+// makes cheap.
+pub @tier(embedded)
+fn compress(st: Md5, blk: Block) -> Md5
+    let m0 = blk.w[0]
+    let m1 = blk.w[1]
+    let m2 = blk.w[2]
+    let m3 = blk.w[3]
+    let m4 = blk.w[4]
+    let m5 = blk.w[5]
+    let m6 = blk.w[6]
+    let m7 = blk.w[7]
+    let m8 = blk.w[8]
+    let m9 = blk.w[9]
+    let m10 = blk.w[10]
+    let m11 = blk.w[11]
+    let m12 = blk.w[12]
+    let m13 = blk.w[13]
+    let m14 = blk.w[14]
+    let m15 = blk.w[15]
+
+    var a = st.a
+    var b = st.b
+    var c = st.c
+    var d = st.d
+
+    // Round 1: F, message word i.
+    a = step(a, b, f_fn(b, c, d), 0xD76AA478, m0, 7)
+    d = step(d, a, f_fn(a, b, c), 0xE8C7B756, m1, 12)
+    c = step(c, d, f_fn(d, a, b), 0x242070DB, m2, 17)
+    b = step(b, c, f_fn(c, d, a), 0xC1BDCEEE, m3, 22)
+    a = step(a, b, f_fn(b, c, d), 0xF57C0FAF, m4, 7)
+    d = step(d, a, f_fn(a, b, c), 0x4787C62A, m5, 12)
+    c = step(c, d, f_fn(d, a, b), 0xA8304613, m6, 17)
+    b = step(b, c, f_fn(c, d, a), 0xFD469501, m7, 22)
+    a = step(a, b, f_fn(b, c, d), 0x698098D8, m8, 7)
+    d = step(d, a, f_fn(a, b, c), 0x8B44F7AF, m9, 12)
+    c = step(c, d, f_fn(d, a, b), 0xFFFF5BB1, m10, 17)
+    b = step(b, c, f_fn(c, d, a), 0x895CD7BE, m11, 22)
+    a = step(a, b, f_fn(b, c, d), 0x6B901122, m12, 7)
+    d = step(d, a, f_fn(a, b, c), 0xFD987193, m13, 12)
+    c = step(c, d, f_fn(d, a, b), 0xA679438E, m14, 17)
+    b = step(b, c, f_fn(c, d, a), 0x49B40821, m15, 22)
+
+    // Round 2: G, message word (5i + 1) mod 16.
+    a = step(a, b, g_fn(b, c, d), 0xF61E2562, m1, 5)
+    d = step(d, a, g_fn(a, b, c), 0xC040B340, m6, 9)
+    c = step(c, d, g_fn(d, a, b), 0x265E5A51, m11, 14)
+    b = step(b, c, g_fn(c, d, a), 0xE9B6C7AA, m0, 20)
+    a = step(a, b, g_fn(b, c, d), 0xD62F105D, m5, 5)
+    d = step(d, a, g_fn(a, b, c), 0x02441453, m10, 9)
+    c = step(c, d, g_fn(d, a, b), 0xD8A1E681, m15, 14)
+    b = step(b, c, g_fn(c, d, a), 0xE7D3FBC8, m4, 20)
+    a = step(a, b, g_fn(b, c, d), 0x21E1CDE6, m9, 5)
+    d = step(d, a, g_fn(a, b, c), 0xC33707D6, m14, 9)
+    c = step(c, d, g_fn(d, a, b), 0xF4D50D87, m3, 14)
+    b = step(b, c, g_fn(c, d, a), 0x455A14ED, m8, 20)
+    a = step(a, b, g_fn(b, c, d), 0xA9E3E905, m13, 5)
+    d = step(d, a, g_fn(a, b, c), 0xFCEFA3F8, m2, 9)
+    c = step(c, d, g_fn(d, a, b), 0x676F02D9, m7, 14)
+    b = step(b, c, g_fn(c, d, a), 0x8D2A4C8A, m12, 20)
+
+    // Round 3: H, message word (3i + 5) mod 16.
+    a = step(a, b, h_fn(b, c, d), 0xFFFA3942, m5, 4)
+    d = step(d, a, h_fn(a, b, c), 0x8771F681, m8, 11)
+    c = step(c, d, h_fn(d, a, b), 0x6D9D6122, m11, 16)
+    b = step(b, c, h_fn(c, d, a), 0xFDE5380C, m14, 23)
+    a = step(a, b, h_fn(b, c, d), 0xA4BEEA44, m1, 4)
+    d = step(d, a, h_fn(a, b, c), 0x4BDECFA9, m4, 11)
+    c = step(c, d, h_fn(d, a, b), 0xF6BB4B60, m7, 16)
+    b = step(b, c, h_fn(c, d, a), 0xBEBFBC70, m10, 23)
+    a = step(a, b, h_fn(b, c, d), 0x289B7EC6, m13, 4)
+    d = step(d, a, h_fn(a, b, c), 0xEAA127FA, m0, 11)
+    c = step(c, d, h_fn(d, a, b), 0xD4EF3085, m3, 16)
+    b = step(b, c, h_fn(c, d, a), 0x04881D05, m6, 23)
+    a = step(a, b, h_fn(b, c, d), 0xD9D4D039, m9, 4)
+    d = step(d, a, h_fn(a, b, c), 0xE6DB99E5, m12, 11)
+    c = step(c, d, h_fn(d, a, b), 0x1FA27CF8, m15, 16)
+    b = step(b, c, h_fn(c, d, a), 0xC4AC5665, m2, 23)
+
+    // Round 4: I, message word (7i) mod 16.
+    a = step(a, b, i_fn(b, c, d), 0xF4292244, m0, 6)
+    d = step(d, a, i_fn(a, b, c), 0x432AFF97, m7, 10)
+    c = step(c, d, i_fn(d, a, b), 0xAB9423A7, m14, 15)
+    b = step(b, c, i_fn(c, d, a), 0xFC93A039, m5, 21)
+    a = step(a, b, i_fn(b, c, d), 0x655B59C3, m12, 6)
+    d = step(d, a, i_fn(a, b, c), 0x8F0CCC92, m3, 10)
+    c = step(c, d, i_fn(d, a, b), 0xFFEFF47D, m10, 15)
+    b = step(b, c, i_fn(c, d, a), 0x85845DD1, m1, 21)
+    a = step(a, b, i_fn(b, c, d), 0x6FA87E4F, m8, 6)
+    d = step(d, a, i_fn(a, b, c), 0xFE2CE6E0, m15, 10)
+    c = step(c, d, i_fn(d, a, b), 0xA3014314, m6, 15)
+    b = step(b, c, i_fn(c, d, a), 0x4E0811A1, m13, 21)
+    a = step(a, b, i_fn(b, c, d), 0xF7537E82, m4, 6)
+    d = step(d, a, i_fn(a, b, c), 0xBD3AF235, m11, 10)
+    c = step(c, d, i_fn(d, a, b), 0x2AD7D2BB, m2, 15)
+    b = step(b, c, i_fn(c, d, a), 0xEB86D391, m9, 21)
+
+    Md5 { a: word.mask32(st.a + a), b: word.mask32(st.b + b),
+          c: word.mask32(st.c + c), d: word.mask32(st.d + d),
+          len: st.len }
+
+// A state with nothing absorbed (RFC 1321 §3.3).
+//
+// ```novo
+// use word
+// use md5_core
+//
+// fn main() [io]
+//     let st: Md5 = md5_core.new()
+//     let one: Md5 = md5_core.compress(st, Block { w: [0, 0, 0, 0,
+//         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] })
+//     println("one block absorbed")
+// ```
+pub fn new() -> Md5
+    Md5 { a: 0x67452301, b: 0xEFCDAB89, c: 0x98BADCFE, d: 0x10325476, len: 0 }

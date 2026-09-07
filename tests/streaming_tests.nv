@@ -1,0 +1,120 @@
+// tests/streaming_tests.nv — the long-message vector, and the promise
+// that streaming and one-shot are the same function.
+//
+// Run from the package directory:
+//
+//   novo test tests/streaming_tests.nv
+
+
+use std.test
+use std.bytes
+
+// A test input built from hex, so nothing here depends on how a `Str`
+// literal escapes a byte.  `from_hex` cannot fail on a literal this
+// file generated, and the fallback keeps the type `Bytes` rather than
+// `?Bytes`.
+fn hexb(h: Str) -> Bytes
+    bytes.from_hex(h) ?? bytes.zeros(0)
+
+// `n` bytes of the byte `v` — the shape RFC 2202 and RFC 4231 write
+// their keys and data in.
+fn rep(n: Int, v: Int) -> Bytes
+    var b = bytes.zeros(n)
+    for i in 0..n
+        b = bytes.set_u8(b, i, v)
+    b
+
+use hashing
+
+// The million-'a' vector every one of these standards publishes,
+// fed one 64 KiB block at a time — which is what the streaming
+// contract is FOR, and the only test here that exercises a message
+// bigger than a handful of blocks.
+//
+// 1,000,000 is not a multiple of the block size, so the remainder
+// goes to `finish`: exactly the shape the documentation tells a
+// caller to write.
+@test
+fn test_million_a_streamed_in_64k_chunks()
+    let chunk = rep(65536, 0x61)
+    let whole = 1000000 / 65536
+    let rest = rep(1000000 - whole * 65536, 0x61)
+
+    var s_sha256 = hashing.sha256_new()
+    var s_sha512 = hashing.sha512_new()
+    var s_sha1 = hashing.sha1_new()
+    var s_md5 = hashing.md5_new()
+    for i in 0..whole
+        s_sha256 = hashing.sha256_update(s_sha256, chunk)
+        s_sha512 = hashing.sha512_update(s_sha512, chunk)
+        s_sha1 = hashing.sha1_update(s_sha1, chunk)
+        s_md5 = hashing.md5_update(s_md5, chunk)
+
+    test.assert_eq_str(
+        bytes.to_hex(hashing.sha256_finish(s_sha256, rest, bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+        "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
+    test.assert_eq_str(
+        bytes.to_hex(hashing.sha512_finish(s_sha512, rest, bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+        "e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973ebde0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b")
+    test.assert_eq_str(
+        bytes.to_hex(hashing.sha1_finish(s_sha1, rest, bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+        "34aa973cd4c4daa4f61eeb2bdbad27316534016f")
+    test.assert_eq_str(
+        bytes.to_hex(hashing.md5_finish(s_md5, rest, bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+        "7707d6ae4e027c70eea2a935c2296f21")
+
+// Streaming and one-shot agree, at every split.
+//
+// The state carries no partial block, so the only thing that can
+// break here is the length accounting: `finish` pads with the total
+// absorbed, and a state that lost track of what `update` took would
+// pad with the wrong length and produce a digest that is wrong in a
+// way no single-call test can see.
+@test
+fn test_streamed_equals_one_shot_at_every_split()
+    let msg = pat(1000)
+    for k in 0..16
+        let cut = k * 64
+        let head = bytes.slice(msg, 0, cut)
+        let tail = bytes.slice(msg, cut, 1000)
+        test.assert_eq_str(
+            bytes.to_hex(hashing.sha256_finish(hashing.sha256_update(hashing.sha256_new(), head), tail,
+                                   bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+            bytes.to_hex(hashing.sha256(msg)))
+        test.assert_eq_str(
+            bytes.to_hex(hashing.sha1_finish(hashing.sha1_update(hashing.sha1_new(), head), tail,
+                                   bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+            bytes.to_hex(hashing.sha1(msg)))
+        test.assert_eq_str(
+            bytes.to_hex(hashing.md5_finish(hashing.md5_update(hashing.md5_new(), head), tail,
+                                   bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+            bytes.to_hex(hashing.md5(msg)))
+    for k in 0..8
+        let cut = k * 128
+        let head = bytes.slice(msg, 0, cut)
+        let tail = bytes.slice(msg, cut, 1000)
+        test.assert_eq_str(
+            bytes.to_hex(hashing.sha512_finish(hashing.sha512_update(hashing.sha512_new(), head), tail,
+                                       bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+            bytes.to_hex(hashing.sha512(msg)))
+
+// `update` advances the byte count by what it absorbed, and only
+// by that.  A state that counted the unabsorbed remainder would pad
+// with a length the message does not have.
+@test
+fn test_update_counts_only_whole_blocks()
+    test.assert_eq(hashing.sha256_update(hashing.sha256_new(), rep(192, 0)).len, 192)
+    test.assert_eq(hashing.sha256_update(hashing.sha256_new(), rep(199, 0)).len, 192)
+    test.assert_eq(hashing.sha512_update(hashing.sha512_new(), rep(384, 0)).len, 384)
+    test.assert_eq(hashing.sha512_update(hashing.sha512_new(), rep(391, 0)).len, 384)
+    test.assert_eq(hashing.sha1_update(hashing.sha1_new(), rep(192, 0)).len, 192)
+    test.assert_eq(hashing.sha1_update(hashing.sha1_new(), rep(199, 0)).len, 192)
+    test.assert_eq(hashing.md5_update(hashing.md5_new(), rep(192, 0)).len, 192)
+    test.assert_eq(hashing.md5_update(hashing.md5_new(), rep(199, 0)).len, 192)
+
+// `n` bytes of `i mod 251`.
+fn pat(n: Int) -> Bytes
+    var b = bytes.zeros(n)
+    for i in 0..n
+        b = bytes.set_u8(b, i, i % 251)
+    b

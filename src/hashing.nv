@@ -1,0 +1,461 @@
+// src/hashing.nv — the `Bytes` half of all four hashes: streaming,
+// one-shot, and HMAC.
+//
+// THIS IS THE MODULE A HOST PROGRAM IMPORTS.  `use hashing` and the
+// whole surface is there — `hashing.sha256("abc")`, and the streaming
+// trio for anything too big to hold.
+//
+// The compression functions are NOT here.  They live in `sha256_core`
+// and its three siblings, which import `word` and nothing else and
+// carry `@tier(embedded)` on every function, so they cross-compile for
+// a device on their own.  This module is what stays behind: it is the
+// one that knows about `Bytes`, and `Bytes` is not on the embedded
+// surface.  The split is not tidiness — a single host-only function
+// anywhere in a package is an undefined symbol at embedded link time,
+// whether or not the firmware ever calls it.
+//
+// THE STREAMING CONTRACT
+//
+// `<hash>_update` absorbs WHOLE BLOCKS only, because the state carries
+// no partial block: it is nine inline words with no buffer to own,
+// which is what keeps it a `@value` struct and the hot path free of
+// the heap.  So the shape of a streaming caller is
+//
+//     var st = hashing.sha256_new()
+//     for chunk in <block-aligned chunks>
+//         st = hashing.sha256_update(st, chunk)
+//     let d = hashing.sha256_finish(st, whatever_is_left, out)
+//
+// and `finish` takes any length, so the remainder is never a problem.
+// Any I/O buffer size that is a multiple of 128 satisfies all four
+// hashes at once — 4096, 8192 and 65536 all do — so in practice the
+// contract costs a caller nothing.
+
+use std.bytes
+use digest
+use sha256_core
+use sha512_core
+use sha1_core
+use md5_core
+
+// ── SHA-256 ────────────────────────────────────────────────────
+
+// SHA-256's digest, in bytes.
+pub const SHA256_DIGEST_BYTES = 32
+
+// SHA-256's message block, in bytes.
+pub const SHA256_BLOCK_BYTES = 64
+
+// A SHA-256 state with nothing absorbed — `sha256_core.new()` under the
+// name a caller of this module already has imported, so streaming needs
+// only `use hashing`.
+pub fn sha256_new() -> Sha256
+    sha256_core.new()
+
+// Absorb `data`, which MUST be a whole number of blocks.
+//
+// The state carries no partial block — that is what keeps it nine
+// inline words with no buffer to own — so a caller streaming a large
+// input feeds it block-aligned chunks and hands whatever is left to
+// `finish`.  Any I/O buffer size that is a multiple of 128 satisfies
+// every hash in this package at once, so in practice this costs a
+// caller nothing: 4096, 8192 and 65536 all qualify.
+//
+// A length that is not a multiple of `SHA256_BLOCK_BYTES` leaves the trailing
+// bytes UNABSORBED rather than guessing what was meant; `finish`
+// accepts any length, so passing the whole remainder there is always
+// correct.
+pub fn sha256_update(st: Sha256, data: Bytes) -> Sha256
+    let blocks = bytes.len(data) / SHA256_BLOCK_BYTES
+    var s = st
+    for i in 0..blocks
+        s = sha256_core.compress(s, digest.block_be32(data, i * SHA256_BLOCK_BYTES))
+    Sha256 { h0: s.h0, h1: s.h1, h2: s.h2, h3: s.h3,
+             h4: s.h4, h5: s.h5, h6: s.h6, h7: s.h7,
+             len: s.len + blocks * SHA256_BLOCK_BYTES }
+
+// Absorb `tail` — any length, including none — pad, and write the
+// 32-byte digest into `out`.
+//
+// `out` must be at least `SHA256_DIGEST_BYTES` long; the buffer comes back
+// so the caller can keep using it, which is the shape every writer in
+// `std.bytes` has and the reason nothing here allocates a result the
+// caller did not ask for.
+//
+// ```novo
+// use std.bytes
+// use hashing
+//
+// fn main() [io]
+//     let d = hashing.sha256_finish(hashing.sha256_new(), "abc", bytes.zeros(32))
+//     println(bytes.to_hex(d))
+//     // ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+// ```
+pub fn sha256_finish(st: Sha256, tail: Bytes, out: Bytes) -> Bytes
+    let n = bytes.len(tail)
+    let whole = (n / SHA256_BLOCK_BYTES) * SHA256_BLOCK_BYTES
+    let rem = n - whole
+    let bit_len = (st.len + n) * 8
+    var s = st
+    for i in 0..(whole / SHA256_BLOCK_BYTES)
+        s = sha256_core.compress(s, digest.block_be32(tail, i * SHA256_BLOCK_BYTES))
+    let nb = digest.pad_blocks(rem, SHA256_BLOCK_BYTES, 8)
+    let plen = nb * SHA256_BLOCK_BYTES
+    for b in 0..nb
+        s = sha256_core.compress(s, digest.pad_block_be32(tail, whole, rem, plen, bit_len, b))
+    var o = out
+    o = bytes.set_u32_be(o, 0, s.h0)
+    o = bytes.set_u32_be(o, 4, s.h1)
+    o = bytes.set_u32_be(o, 8, s.h2)
+    o = bytes.set_u32_be(o, 12, s.h3)
+    o = bytes.set_u32_be(o, 16, s.h4)
+    o = bytes.set_u32_be(o, 20, s.h5)
+    o = bytes.set_u32_be(o, 24, s.h6)
+    o = bytes.set_u32_be(o, 28, s.h7)
+    o
+
+// The digest of `data`, in a buffer of its own.
+//
+// The convenience shape: one call, and the 32 bytes come back
+// allocated.  It is `finish` over a fresh state plus that one
+// allocation, and it is the only function in this module that
+// allocates at all.
+//
+// ```novo
+// use std.bytes
+// use hashing
+//
+// fn main() [io]
+//     println(bytes.to_hex(hashing.sha256("abc")))
+//     // ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+// ```
+pub fn sha256(data: Bytes) -> Bytes
+    sha256_finish(sha256_core.new(), data, bytes.zeros(SHA256_DIGEST_BYTES))
+
+// The HMAC of `msg` under `key` (RFC 2104), written into `out`.
+//
+// The construction is `H((K' ^ opad) || H((K' ^ ipad) || msg))`, where
+// `K'` is the key zero-padded to one block — or, for a key longer than
+// a block, the key's own SHA-256 digest padded the same way.  Both
+// inner and outer hash start from a single block of key material, so
+// each is one `update` and one `finish` and neither needs a partial
+// block.
+//
+// The tag is `SHA256_DIGEST_BYTES` long; a protocol that truncates it should
+// say by how much and compare with `digest.ct_eq`, never `==`.
+//
+// ```novo
+// use std.bytes
+// use digest
+// use hashing
+//
+// fn main() [io]
+//     let tag = hashing.hmac_sha256("key", "msg", bytes.zeros(hashing.SHA256_DIGEST_BYTES))
+//     println("${digest.ct_eq(tag, tag)}")   // true
+// ```
+pub fn hmac_sha256(key: Bytes, msg: Bytes, out: Bytes) -> Bytes
+    let k = if bytes.len(key) > SHA256_BLOCK_BYTES
+        sha256(key)
+    else
+        key
+    let inner = sha256_finish(sha256_update(sha256_core.new(), digest.hmac_pad_block(k, SHA256_BLOCK_BYTES, 0x36)),
+                       msg, bytes.zeros(SHA256_DIGEST_BYTES))
+    sha256_finish(sha256_update(sha256_core.new(), digest.hmac_pad_block(k, SHA256_BLOCK_BYTES, 0x5C)), inner, out)
+
+// ── SHA-512 ────────────────────────────────────────────────────
+
+// SHA-512's digest, in bytes.
+pub const SHA512_DIGEST_BYTES = 64
+
+// SHA-512's message block, in bytes.
+pub const SHA512_BLOCK_BYTES = 128
+
+// A SHA-512 state with nothing absorbed — `sha512_core.new()` under the
+// name a caller of this module already has imported, so streaming needs
+// only `use hashing`.
+pub fn sha512_new() -> Sha512
+    sha512_core.new()
+
+// Absorb `data`, which MUST be a whole number of 128-byte blocks.
+//
+// The same contract `sha256.update` carries, and for the same reason:
+// the state holds no partial block.  Trailing bytes beyond the last
+// whole block are not absorbed — hand them to `finish`, which takes
+// any length.
+pub fn sha512_update(st: Sha512, data: Bytes) -> Sha512
+    let blocks = bytes.len(data) / SHA512_BLOCK_BYTES
+    var s = st
+    for i in 0..blocks
+        s = sha512_core.compress(s, digest.block_be64(data, i * SHA512_BLOCK_BYTES))
+    Sha512 { h0: s.h0, h1: s.h1, h2: s.h2, h3: s.h3,
+             h4: s.h4, h5: s.h5, h6: s.h6, h7: s.h7,
+             len: s.len + blocks * SHA512_BLOCK_BYTES }
+
+// Absorb `tail`, pad, and write the 64-byte digest into `out`.
+//
+// ```novo
+// use std.bytes
+// use hashing
+//
+// fn main() [io]
+//     let d = hashing.sha512_finish(hashing.sha512_new(), "abc", bytes.zeros(64))
+//     println(bytes.to_hex(bytes.slice(d, 0, 8)))   // ddaf35a193617aba
+// ```
+pub fn sha512_finish(st: Sha512, tail: Bytes, out: Bytes) -> Bytes
+    let n = bytes.len(tail)
+    let whole = (n / SHA512_BLOCK_BYTES) * SHA512_BLOCK_BYTES
+    let rem = n - whole
+    let bit_len = (st.len + n) * 8
+    var s = st
+    for i in 0..(whole / SHA512_BLOCK_BYTES)
+        s = sha512_core.compress(s, digest.block_be64(tail, i * SHA512_BLOCK_BYTES))
+    let nb = digest.pad_blocks(rem, SHA512_BLOCK_BYTES, 16)
+    let plen = nb * SHA512_BLOCK_BYTES
+    for b in 0..nb
+        s = sha512_core.compress(s, digest.pad_block_be64(tail, whole, rem, plen, bit_len, b))
+    var o = out
+    o = bytes.set_u64_be(o, 0, s.h0)
+    o = bytes.set_u64_be(o, 8, s.h1)
+    o = bytes.set_u64_be(o, 16, s.h2)
+    o = bytes.set_u64_be(o, 24, s.h3)
+    o = bytes.set_u64_be(o, 32, s.h4)
+    o = bytes.set_u64_be(o, 40, s.h5)
+    o = bytes.set_u64_be(o, 48, s.h6)
+    o = bytes.set_u64_be(o, 56, s.h7)
+    o
+
+// The digest of `data`, in a buffer of its own — `finish` over a
+// fresh state plus one allocation.
+//
+// ```novo
+// use std.bytes
+// use hashing
+//
+// fn main() [io]
+//     println(bytes.to_hex(bytes.slice(hashing.sha512("abc"), 0, 8)))
+//     // ddaf35a193617aba
+// ```
+pub fn sha512(data: Bytes) -> Bytes
+    sha512_finish(sha512_core.new(), data, bytes.zeros(SHA512_DIGEST_BYTES))
+
+// The HMAC of `msg` under `key` (RFC 2104), written into `out`.
+//
+// The construction is `H((K' ^ opad) || H((K' ^ ipad) || msg))`, where
+// `K'` is the key zero-padded to one block — or, for a key longer than
+// a block, the key's own SHA-512 digest padded the same way.  Both
+// inner and outer hash start from a single block of key material, so
+// each is one `update` and one `finish` and neither needs a partial
+// block.
+//
+// The tag is `SHA512_DIGEST_BYTES` long; a protocol that truncates it should
+// say by how much and compare with `digest.ct_eq`, never `==`.
+//
+// ```novo
+// use std.bytes
+// use digest
+// use hashing
+//
+// fn main() [io]
+//     let tag = hashing.hmac_sha512("key", "msg", bytes.zeros(hashing.SHA512_DIGEST_BYTES))
+//     println("${digest.ct_eq(tag, tag)}")   // true
+// ```
+pub fn hmac_sha512(key: Bytes, msg: Bytes, out: Bytes) -> Bytes
+    let k = if bytes.len(key) > SHA512_BLOCK_BYTES
+        sha512(key)
+    else
+        key
+    let inner = sha512_finish(sha512_update(sha512_core.new(), digest.hmac_pad_block(k, SHA512_BLOCK_BYTES, 0x36)),
+                       msg, bytes.zeros(SHA512_DIGEST_BYTES))
+    sha512_finish(sha512_update(sha512_core.new(), digest.hmac_pad_block(k, SHA512_BLOCK_BYTES, 0x5C)), inner, out)
+
+// ── SHA-1 ──────────────────────────────────────────────────────
+
+// SHA-1's digest, in bytes.
+pub const SHA1_DIGEST_BYTES = 20
+
+// SHA-1's message block, in bytes.
+pub const SHA1_BLOCK_BYTES = 64
+
+// A SHA-1 state with nothing absorbed — `sha1_core.new()` under the
+// name a caller of this module already has imported, so streaming needs
+// only `use hashing`.
+pub fn sha1_new() -> Sha1
+    sha1_core.new()
+
+// Absorb `data`, which MUST be a whole number of blocks — the
+// contract `sha256.update` carries and for the same reason.
+pub fn sha1_update(st: Sha1, data: Bytes) -> Sha1
+    let blocks = bytes.len(data) / SHA1_BLOCK_BYTES
+    var s = st
+    for i in 0..blocks
+        s = sha1_core.compress(s, digest.block_be32(data, i * SHA1_BLOCK_BYTES))
+    Sha1 { h0: s.h0, h1: s.h1, h2: s.h2, h3: s.h3, h4: s.h4,
+           len: s.len + blocks * SHA1_BLOCK_BYTES }
+
+// Absorb `tail`, pad, and write the 20-byte digest into `out`.
+//
+// ```novo
+// use std.bytes
+// use hashing
+//
+// fn main() [io]
+//     let d = hashing.sha1_finish(hashing.sha1_new(), "abc", bytes.zeros(20))
+//     println(bytes.to_hex(d))   // a9993e364706816aba3e25717850c26c9cd0d89d
+// ```
+pub fn sha1_finish(st: Sha1, tail: Bytes, out: Bytes) -> Bytes
+    let n = bytes.len(tail)
+    let whole = (n / SHA1_BLOCK_BYTES) * SHA1_BLOCK_BYTES
+    let rem = n - whole
+    let bit_len = (st.len + n) * 8
+    var s = st
+    for i in 0..(whole / SHA1_BLOCK_BYTES)
+        s = sha1_core.compress(s, digest.block_be32(tail, i * SHA1_BLOCK_BYTES))
+    let nb = digest.pad_blocks(rem, SHA1_BLOCK_BYTES, 8)
+    let plen = nb * SHA1_BLOCK_BYTES
+    for b in 0..nb
+        s = sha1_core.compress(s, digest.pad_block_be32(tail, whole, rem, plen, bit_len, b))
+    var o = out
+    o = bytes.set_u32_be(o, 0, s.h0)
+    o = bytes.set_u32_be(o, 4, s.h1)
+    o = bytes.set_u32_be(o, 8, s.h2)
+    o = bytes.set_u32_be(o, 12, s.h3)
+    o = bytes.set_u32_be(o, 16, s.h4)
+    o
+
+// The digest of `data`, in a buffer of its own.
+//
+// ```novo
+// use std.bytes
+// use hashing
+//
+// fn main() [io]
+//     println(bytes.to_hex(hashing.sha1("abc")))
+//     // a9993e364706816aba3e25717850c26c9cd0d89d
+// ```
+pub fn sha1(data: Bytes) -> Bytes
+    sha1_finish(sha1_core.new(), data, bytes.zeros(SHA1_DIGEST_BYTES))
+
+// The HMAC of `msg` under `key` (RFC 2104), written into `out`.
+//
+// The construction is `H((K' ^ opad) || H((K' ^ ipad) || msg))`, where
+// `K'` is the key zero-padded to one block — or, for a key longer than
+// a block, the key's own SHA-1 digest padded the same way.  Both
+// inner and outer hash start from a single block of key material, so
+// each is one `update` and one `finish` and neither needs a partial
+// block.
+//
+// The tag is `SHA1_DIGEST_BYTES` long; a protocol that truncates it should
+// say by how much and compare with `digest.ct_eq`, never `==`.
+//
+// ```novo
+// use std.bytes
+// use digest
+// use hashing
+//
+// fn main() [io]
+//     let tag = hashing.hmac_sha1("key", "msg", bytes.zeros(hashing.SHA1_DIGEST_BYTES))
+//     println("${digest.ct_eq(tag, tag)}")   // true
+// ```
+pub fn hmac_sha1(key: Bytes, msg: Bytes, out: Bytes) -> Bytes
+    let k = if bytes.len(key) > SHA1_BLOCK_BYTES
+        sha1(key)
+    else
+        key
+    let inner = sha1_finish(sha1_update(sha1_core.new(), digest.hmac_pad_block(k, SHA1_BLOCK_BYTES, 0x36)),
+                       msg, bytes.zeros(SHA1_DIGEST_BYTES))
+    sha1_finish(sha1_update(sha1_core.new(), digest.hmac_pad_block(k, SHA1_BLOCK_BYTES, 0x5C)), inner, out)
+
+// ── MD5 ────────────────────────────────────────────────────────
+
+// MD5's digest, in bytes.
+pub const MD5_DIGEST_BYTES = 16
+
+// MD5's message block, in bytes.
+pub const MD5_BLOCK_BYTES = 64
+
+// A MD5 state with nothing absorbed — `md5_core.new()` under the
+// name a caller of this module already has imported, so streaming needs
+// only `use hashing`.
+pub fn md5_new() -> Md5
+    md5_core.new()
+
+// Absorb `data`, which MUST be a whole number of blocks — the
+// contract `sha256.update` carries and for the same reason.
+pub fn md5_update(st: Md5, data: Bytes) -> Md5
+    let blocks = bytes.len(data) / MD5_BLOCK_BYTES
+    var s = st
+    for i in 0..blocks
+        s = md5_core.compress(s, digest.block_le32(data, i * MD5_BLOCK_BYTES))
+    Md5 { a: s.a, b: s.b, c: s.c, d: s.d, len: s.len + blocks * MD5_BLOCK_BYTES }
+
+// Absorb `tail`, pad, and write the 16-byte digest into `out`.
+//
+// ```novo
+// use std.bytes
+// use hashing
+//
+// fn main() [io]
+//     let d = hashing.md5_finish(hashing.md5_new(), "abc", bytes.zeros(16))
+//     println(bytes.to_hex(d))   // 900150983cd24fb0d6963f7d28e17f72
+// ```
+pub fn md5_finish(st: Md5, tail: Bytes, out: Bytes) -> Bytes
+    let n = bytes.len(tail)
+    let whole = (n / MD5_BLOCK_BYTES) * MD5_BLOCK_BYTES
+    let rem = n - whole
+    let bit_len = (st.len + n) * 8
+    var s = st
+    for i in 0..(whole / MD5_BLOCK_BYTES)
+        s = md5_core.compress(s, digest.block_le32(tail, i * MD5_BLOCK_BYTES))
+    let nb = digest.pad_blocks(rem, MD5_BLOCK_BYTES, 8)
+    let plen = nb * MD5_BLOCK_BYTES
+    for b in 0..nb
+        s = md5_core.compress(s, digest.pad_block_le32(tail, whole, rem, plen, bit_len, b))
+    var o = out
+    o = bytes.set_u32_le(o, 0, s.a)
+    o = bytes.set_u32_le(o, 4, s.b)
+    o = bytes.set_u32_le(o, 8, s.c)
+    o = bytes.set_u32_le(o, 12, s.d)
+    o
+
+// The digest of `data`, in a buffer of its own.
+//
+// ```novo
+// use std.bytes
+// use hashing
+//
+// fn main() [io]
+//     println(bytes.to_hex(hashing.md5("abc")))
+//     // 900150983cd24fb0d6963f7d28e17f72
+// ```
+pub fn md5(data: Bytes) -> Bytes
+    md5_finish(md5_core.new(), data, bytes.zeros(MD5_DIGEST_BYTES))
+
+// The HMAC of `msg` under `key` (RFC 2104), written into `out`.
+//
+// The construction is `H((K' ^ opad) || H((K' ^ ipad) || msg))`, where
+// `K'` is the key zero-padded to one block — or, for a key longer than
+// a block, the key's own MD5 digest padded the same way.  Both
+// inner and outer hash start from a single block of key material, so
+// each is one `update` and one `finish` and neither needs a partial
+// block.
+//
+// The tag is `MD5_DIGEST_BYTES` long; a protocol that truncates it should
+// say by how much and compare with `digest.ct_eq`, never `==`.
+//
+// ```novo
+// use std.bytes
+// use digest
+// use hashing
+//
+// fn main() [io]
+//     let tag = hashing.hmac_md5("key", "msg", bytes.zeros(hashing.MD5_DIGEST_BYTES))
+//     println("${digest.ct_eq(tag, tag)}")   // true
+// ```
+pub fn hmac_md5(key: Bytes, msg: Bytes, out: Bytes) -> Bytes
+    let k = if bytes.len(key) > MD5_BLOCK_BYTES
+        md5(key)
+    else
+        key
+    let inner = md5_finish(md5_update(md5_core.new(), digest.hmac_pad_block(k, MD5_BLOCK_BYTES, 0x36)),
+                       msg, bytes.zeros(MD5_DIGEST_BYTES))
+    md5_finish(md5_update(md5_core.new(), digest.hmac_pad_block(k, MD5_BLOCK_BYTES, 0x5C)), inner, out)

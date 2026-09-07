@@ -1,0 +1,115 @@
+// src/word.nv — the word algebra every hash in this package is built
+// from, and the message block they all read.
+//
+// WHY THIS MODULE EXISTS SEPARATELY
+//
+// Everything here is expressible at `@tier(embedded)`: `@value`
+// structs, fixed inline arrays, `bits.*` and `int.wrapping_add` (both
+// admitted at every tier), and bounded `for` loops.  No `Bytes`, no
+// list, no `Str` — none of which the embedded surface admits.  That is
+// the whole reason the compression functions in `sha256`, `sha512`,
+// `sha1` and `md5` take a `Block` rather than a `Bytes`: a core
+// written against this module allocates nothing, reference-counts
+// nothing, and runs on a Cortex-M whose arena it never touches.  The
+// `Bytes` half lives in `digest`, one layer up, where the host tier
+// begins.
+//
+// WORDS ARE `Int`, NOT `u32` / `u64`
+//
+// A word here is an `Int` carrying a bit pattern, not a number.  For
+// the 32-bit hashes the value is kept in 0..2^32-1 and `mask32`
+// re-imposes that after every addition — five 32-bit addends sum to
+// less than 2^35, so the addition itself can never trap.  For SHA-512
+// a word fills all 64 bits and its addition is modular by definition,
+// where `+` WOULD trap (SPEC §13.2), so `wadd64` says so with
+// `int.wrapping_add`.  A SHA-512 word with its top bit set reads as a
+// negative `Int`; only the bit pattern is ever meaningful.
+
+use std.bits
+use std.int
+
+// A message block: sixteen words, which is 512 bits read as 32-bit
+// words (SHA-256, SHA-1, MD5) and 1024 bits read as 64-bit ones
+// (SHA-512).  One type serves all four because the block is sixteen
+// words in every one of them; what differs is the width the algorithm
+// reads them at, which is a property of the algorithm and not of the
+// block.
+//
+// `[Int; 16]` inside a `@value` struct is a true inline array
+// (SPEC §14.4): sixteen words laid out in the struct itself, on the
+// stack, with no header and no cell.
+pub @value
+struct Block
+    w: [Int; 16]
+
+// Truncate to 32 bits.
+//
+// The 32-bit hashes apply this after every addition, which is what
+// keeps a word in 0..2^32-1 and the additions themselves far below the
+// point `+` would trap.
+//
+// ```novo
+// use word
+//
+// fn main() [io]
+//     println("${word.mask32(0x100000001)}")   // 1
+// ```
+pub @tier(embedded)
+fn mask32(x: Int) -> Int
+    bits.band(x, 0xFFFFFFFF)
+
+// Rotate a 32-bit word right by `n` bits, for `n` in 1..31.
+//
+// `n` outside that range is not meaningful here and is not checked:
+// every caller in this package passes a constant taken straight from
+// the standard that defines it.
+pub @tier(embedded)
+fn rotr32(x: Int, n: Int) -> Int
+    mask32(bits.bor(bits.shr(mask32(x), n), bits.shl(x, 32 - n)))
+
+// Rotate a 32-bit word left by `n` bits, for `n` in 1..31.
+//
+// SHA-1 and MD5 are specified in terms of a left rotate where SHA-256
+// is specified in terms of a right one; both spellings are here so
+// each implementation reads like the document that defines it.
+pub @tier(embedded)
+fn rotl32(x: Int, n: Int) -> Int
+    rotr32(x, 32 - n)
+
+// Logical right shift of a 32-bit word.
+//
+// Distinct from `rotr32`: the bits shifted off the bottom are dropped
+// rather than re-entering at the top.  `bits.shr` is already the
+// logical shift, so the mask is the whole of what this adds.
+pub @tier(embedded)
+fn shr32(x: Int, n: Int) -> Int
+    bits.shr(mask32(x), n)
+
+// Rotate a 64-bit word right by `n` bits, for `n` in 1..63.
+//
+// The whole `Int` is the word here, so no mask is applied — and none
+// would be correct, since a SHA-512 word legitimately has its top bit
+// set.  `bits.shr` is the logical shift, which is what makes the two
+// halves meet cleanly.
+pub @tier(embedded)
+fn rotr64(x: Int, n: Int) -> Int
+    bits.bor(bits.shr(x, n), bits.shl(x, 64 - n))
+
+// Add two 64-bit words modulo 2^64.
+//
+// `+` on `Int` TRAPS on overflow (SPEC §13.2) and SHA-512's addition
+// is modular by definition, so this is the explicit opt-out rather
+// than an oversight: `int.wrapping_add` is two's-complement wrapping
+// and never traps.  Every addition in `sha512` goes through here, and
+// this comment is why.
+//
+// ```novo
+// use word
+//
+// fn main() [io]
+//     // 2^64 - 1 plus 2 wraps to 1 rather than trapping.
+//     println("${word.wadd64(-1, 2)}")   // 1
+// ```
+pub @tier(embedded)
+fn wadd64(x: Int, y: Int) -> Int
+    int.wrapping_add(x, y)

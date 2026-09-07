@@ -1,0 +1,300 @@
+// src/sha256_core.nv — SHA-256 (FIPS 180-4 §6.2).
+//
+// A 256-bit digest over 512-bit blocks, 64 rounds, big-endian
+// throughout.  The compression function below is the one place the
+// algorithm lives; everything else in this module is bookkeeping over
+// it.
+//
+// WHY THE ROUNDS AND THE SCHEDULE ARE WRITTEN OUT
+//
+// The message schedule W[0..63] is defined by a recurrence — W[t]
+// depends on W[t-2], W[t-7], W[t-15] and W[t-16] — and the usual
+// implementation keeps it in a 64-word array it writes into as it
+// goes.  A `@value` struct's inline array cannot be written into
+// (SPEC §14.3), and a heap array would put an allocation on the hot
+// path and take this module off the embedded tier, so the schedule is
+// sixty-four `let` bindings instead: same recurrence, no storage, and
+// every line checkable against FIPS 180-4 §6.2.2 on its own.
+//
+// The rounds are written out for the same reason and one more: the
+// round constant is on the line that uses it, so a reader comparing
+// this against §4.2.2 never has to hold an index in their head.
+
+use std.bits
+use word
+
+// This module is the half of SHA-256 that runs on a device: the
+// state, its initial value, and the compression function.  It
+// imports `word` and nothing else, and every function in it is
+// `@tier(embedded)` — which is what lets it be cross-compiled
+// on its own, with `hashing` and its `Bytes` left behind on the
+// host.
+
+
+// The SHA-256 state: the eight chaining words of FIPS 180-4 §5.3.3 and
+// the number of bytes absorbed so far.
+//
+// A `@value` struct, so it is inline storage — the stack, or a `.bss`
+// slot at module scope — with no cell, no header and no reference
+// count, and a copy of it costs the nine words it is.  That is what
+// lets the compression path run with the heap untouched.
+pub @value
+struct Sha256
+    h0: Int
+    h1: Int
+    h2: Int
+    h3: Int
+    h4: Int
+    h5: Int
+    h6: Int
+    h7: Int
+    len: Int
+
+// The eight working variables a..h of FIPS 180-4 §6.2.2, carried
+// through a round as one value.
+@value
+struct Working256
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+
+// Ch — pick bit-wise from `y` where `x` is set, from `z` where it is
+// not (FIPS 180-4 §4.1.2).
+@tier(embedded)
+fn ch(x: Int, y: Int, z: Int) -> Int
+    bits.xor(bits.band(x, y), bits.band(word.mask32(bits.bnot(x)), z))
+
+// Maj — the bit the majority of the three agree on (§4.1.2).
+@tier(embedded)
+fn maj(x: Int, y: Int, z: Int) -> Int
+    bits.xor(bits.xor(bits.band(x, y), bits.band(x, z)), bits.band(y, z))
+
+// The four rotation functions of §4.1.2, in the order the standard
+// names them.
+@tier(embedded)
+fn big_sigma0(x: Int) -> Int
+    bits.xor(bits.xor(word.rotr32(x, 2), word.rotr32(x, 13)), word.rotr32(x, 22))
+
+@tier(embedded)
+fn big_sigma1(x: Int) -> Int
+    bits.xor(bits.xor(word.rotr32(x, 6), word.rotr32(x, 11)), word.rotr32(x, 25))
+
+@tier(embedded)
+fn small_sigma0(x: Int) -> Int
+    bits.xor(bits.xor(word.rotr32(x, 7), word.rotr32(x, 18)), word.shr32(x, 3))
+
+@tier(embedded)
+fn small_sigma1(x: Int) -> Int
+    bits.xor(bits.xor(word.rotr32(x, 17), word.rotr32(x, 19)), word.shr32(x, 10))
+
+// One round (FIPS 180-4 §6.2.2 step 3).
+//
+// Five 32-bit addends sum to less than 2^35, so the addition itself
+// can never trap and only the result needs masking.
+@tier(embedded)
+fn round(s: Working256, k: Int, w: Int) -> Working256
+    let t1 = word.mask32(s.h + big_sigma1(s.e) + ch(s.e, s.f, s.g) + k + w)
+    let t2 = word.mask32(big_sigma0(s.a) + maj(s.a, s.b, s.c))
+    Working256 { a: word.mask32(t1 + t2), b: s.a, c: s.b, d: s.c,
+           e: word.mask32(s.d + t1), f: s.e, g: s.f, h: s.g }
+
+
+// Absorb one 512-bit block into the state.
+//
+// The whole of SHA-256 is here: the schedule, the sixty-four rounds,
+// and the addition of the result back into the chaining words
+// (FIPS 180-4 §6.2.2 step 4).  `len` is not touched — the callers own
+// it, because `finish` needs the count from BEFORE its own padding
+// blocks go through.
+//
+// This is PUBLIC, and it is the entry point for a caller that has no
+// `Bytes` to give: everything it touches — `@value` structs, inline
+// arrays, `bits.*`, `int.wrapping_add`, bounded `for` — is admitted at
+// `@tier(embedded)`, so firmware holding a block in a `static [u8; N]`
+// can drive the hash with the heap untouched.  `update` and `finish`
+// are the same function with the buffer handling that the host tier
+// makes cheap.
+pub @tier(embedded)
+fn compress(st: Sha256, b: Block) -> Sha256
+    // The first sixteen schedule words are the block itself.
+    let w0 = b.w[0]
+    let w1 = b.w[1]
+    let w2 = b.w[2]
+    let w3 = b.w[3]
+    let w4 = b.w[4]
+    let w5 = b.w[5]
+    let w6 = b.w[6]
+    let w7 = b.w[7]
+    let w8 = b.w[8]
+    let w9 = b.w[9]
+    let w10 = b.w[10]
+    let w11 = b.w[11]
+    let w12 = b.w[12]
+    let w13 = b.w[13]
+    let w14 = b.w[14]
+    let w15 = b.w[15]
+
+    // W[t] = σ1(W[t-2]) + W[t-7] + σ0(W[t-15]) + W[t-16]  (§6.2.2 step 1).
+    let w16 = word.mask32(small_sigma1(w14) + w9 + small_sigma0(w1) + w0)
+    let w17 = word.mask32(small_sigma1(w15) + w10 + small_sigma0(w2) + w1)
+    let w18 = word.mask32(small_sigma1(w16) + w11 + small_sigma0(w3) + w2)
+    let w19 = word.mask32(small_sigma1(w17) + w12 + small_sigma0(w4) + w3)
+    let w20 = word.mask32(small_sigma1(w18) + w13 + small_sigma0(w5) + w4)
+    let w21 = word.mask32(small_sigma1(w19) + w14 + small_sigma0(w6) + w5)
+    let w22 = word.mask32(small_sigma1(w20) + w15 + small_sigma0(w7) + w6)
+    let w23 = word.mask32(small_sigma1(w21) + w16 + small_sigma0(w8) + w7)
+    let w24 = word.mask32(small_sigma1(w22) + w17 + small_sigma0(w9) + w8)
+    let w25 = word.mask32(small_sigma1(w23) + w18 + small_sigma0(w10) + w9)
+    let w26 = word.mask32(small_sigma1(w24) + w19 + small_sigma0(w11) + w10)
+    let w27 = word.mask32(small_sigma1(w25) + w20 + small_sigma0(w12) + w11)
+    let w28 = word.mask32(small_sigma1(w26) + w21 + small_sigma0(w13) + w12)
+    let w29 = word.mask32(small_sigma1(w27) + w22 + small_sigma0(w14) + w13)
+    let w30 = word.mask32(small_sigma1(w28) + w23 + small_sigma0(w15) + w14)
+    let w31 = word.mask32(small_sigma1(w29) + w24 + small_sigma0(w16) + w15)
+    let w32 = word.mask32(small_sigma1(w30) + w25 + small_sigma0(w17) + w16)
+    let w33 = word.mask32(small_sigma1(w31) + w26 + small_sigma0(w18) + w17)
+    let w34 = word.mask32(small_sigma1(w32) + w27 + small_sigma0(w19) + w18)
+    let w35 = word.mask32(small_sigma1(w33) + w28 + small_sigma0(w20) + w19)
+    let w36 = word.mask32(small_sigma1(w34) + w29 + small_sigma0(w21) + w20)
+    let w37 = word.mask32(small_sigma1(w35) + w30 + small_sigma0(w22) + w21)
+    let w38 = word.mask32(small_sigma1(w36) + w31 + small_sigma0(w23) + w22)
+    let w39 = word.mask32(small_sigma1(w37) + w32 + small_sigma0(w24) + w23)
+    let w40 = word.mask32(small_sigma1(w38) + w33 + small_sigma0(w25) + w24)
+    let w41 = word.mask32(small_sigma1(w39) + w34 + small_sigma0(w26) + w25)
+    let w42 = word.mask32(small_sigma1(w40) + w35 + small_sigma0(w27) + w26)
+    let w43 = word.mask32(small_sigma1(w41) + w36 + small_sigma0(w28) + w27)
+    let w44 = word.mask32(small_sigma1(w42) + w37 + small_sigma0(w29) + w28)
+    let w45 = word.mask32(small_sigma1(w43) + w38 + small_sigma0(w30) + w29)
+    let w46 = word.mask32(small_sigma1(w44) + w39 + small_sigma0(w31) + w30)
+    let w47 = word.mask32(small_sigma1(w45) + w40 + small_sigma0(w32) + w31)
+    let w48 = word.mask32(small_sigma1(w46) + w41 + small_sigma0(w33) + w32)
+    let w49 = word.mask32(small_sigma1(w47) + w42 + small_sigma0(w34) + w33)
+    let w50 = word.mask32(small_sigma1(w48) + w43 + small_sigma0(w35) + w34)
+    let w51 = word.mask32(small_sigma1(w49) + w44 + small_sigma0(w36) + w35)
+    let w52 = word.mask32(small_sigma1(w50) + w45 + small_sigma0(w37) + w36)
+    let w53 = word.mask32(small_sigma1(w51) + w46 + small_sigma0(w38) + w37)
+    let w54 = word.mask32(small_sigma1(w52) + w47 + small_sigma0(w39) + w38)
+    let w55 = word.mask32(small_sigma1(w53) + w48 + small_sigma0(w40) + w39)
+    let w56 = word.mask32(small_sigma1(w54) + w49 + small_sigma0(w41) + w40)
+    let w57 = word.mask32(small_sigma1(w55) + w50 + small_sigma0(w42) + w41)
+    let w58 = word.mask32(small_sigma1(w56) + w51 + small_sigma0(w43) + w42)
+    let w59 = word.mask32(small_sigma1(w57) + w52 + small_sigma0(w44) + w43)
+    let w60 = word.mask32(small_sigma1(w58) + w53 + small_sigma0(w45) + w44)
+    let w61 = word.mask32(small_sigma1(w59) + w54 + small_sigma0(w46) + w45)
+    let w62 = word.mask32(small_sigma1(w60) + w55 + small_sigma0(w47) + w46)
+    let w63 = word.mask32(small_sigma1(w61) + w56 + small_sigma0(w48) + w47)
+
+    var s = Working256 { a: st.h0, b: st.h1, c: st.h2, d: st.h3,
+                   e: st.h4, f: st.h5, g: st.h6, h: st.h7 }
+
+    // The sixty-four rounds, each with its constant from §4.2.2.
+    s = round(s, 0x428A2F98, w0)
+    s = round(s, 0x71374491, w1)
+    s = round(s, 0xB5C0FBCF, w2)
+    s = round(s, 0xE9B5DBA5, w3)
+    s = round(s, 0x3956C25B, w4)
+    s = round(s, 0x59F111F1, w5)
+    s = round(s, 0x923F82A4, w6)
+    s = round(s, 0xAB1C5ED5, w7)
+    s = round(s, 0xD807AA98, w8)
+    s = round(s, 0x12835B01, w9)
+    s = round(s, 0x243185BE, w10)
+    s = round(s, 0x550C7DC3, w11)
+    s = round(s, 0x72BE5D74, w12)
+    s = round(s, 0x80DEB1FE, w13)
+    s = round(s, 0x9BDC06A7, w14)
+    s = round(s, 0xC19BF174, w15)
+    s = round(s, 0xE49B69C1, w16)
+    s = round(s, 0xEFBE4786, w17)
+    s = round(s, 0x0FC19DC6, w18)
+    s = round(s, 0x240CA1CC, w19)
+    s = round(s, 0x2DE92C6F, w20)
+    s = round(s, 0x4A7484AA, w21)
+    s = round(s, 0x5CB0A9DC, w22)
+    s = round(s, 0x76F988DA, w23)
+    s = round(s, 0x983E5152, w24)
+    s = round(s, 0xA831C66D, w25)
+    s = round(s, 0xB00327C8, w26)
+    s = round(s, 0xBF597FC7, w27)
+    s = round(s, 0xC6E00BF3, w28)
+    s = round(s, 0xD5A79147, w29)
+    s = round(s, 0x06CA6351, w30)
+    s = round(s, 0x14292967, w31)
+    s = round(s, 0x27B70A85, w32)
+    s = round(s, 0x2E1B2138, w33)
+    s = round(s, 0x4D2C6DFC, w34)
+    s = round(s, 0x53380D13, w35)
+    s = round(s, 0x650A7354, w36)
+    s = round(s, 0x766A0ABB, w37)
+    s = round(s, 0x81C2C92E, w38)
+    s = round(s, 0x92722C85, w39)
+    s = round(s, 0xA2BFE8A1, w40)
+    s = round(s, 0xA81A664B, w41)
+    s = round(s, 0xC24B8B70, w42)
+    s = round(s, 0xC76C51A3, w43)
+    s = round(s, 0xD192E819, w44)
+    s = round(s, 0xD6990624, w45)
+    s = round(s, 0xF40E3585, w46)
+    s = round(s, 0x106AA070, w47)
+    s = round(s, 0x19A4C116, w48)
+    s = round(s, 0x1E376C08, w49)
+    s = round(s, 0x2748774C, w50)
+    s = round(s, 0x34B0BCB5, w51)
+    s = round(s, 0x391C0CB3, w52)
+    s = round(s, 0x4ED8AA4A, w53)
+    s = round(s, 0x5B9CCA4F, w54)
+    s = round(s, 0x682E6FF3, w55)
+    s = round(s, 0x748F82EE, w56)
+    s = round(s, 0x78A5636F, w57)
+    s = round(s, 0x84C87814, w58)
+    s = round(s, 0x8CC70208, w59)
+    s = round(s, 0x90BEFFFA, w60)
+    s = round(s, 0xA4506CEB, w61)
+    s = round(s, 0xBEF9A3F7, w62)
+    s = round(s, 0xC67178F2, w63)
+
+    Sha256 {
+        h0: word.mask32(st.h0 + s.a),
+        h1: word.mask32(st.h1 + s.b),
+        h2: word.mask32(st.h2 + s.c),
+        h3: word.mask32(st.h3 + s.d),
+        h4: word.mask32(st.h4 + s.e),
+        h5: word.mask32(st.h5 + s.f),
+        h6: word.mask32(st.h6 + s.g),
+        h7: word.mask32(st.h7 + s.h),
+        len: st.len
+    }
+
+// A state with nothing absorbed.
+//
+// The eight initial words are the first 32 bits of the fractional
+// parts of the square roots of the first eight primes
+// (FIPS 180-4 §5.3.3).
+//
+// ```novo
+// use word
+// use sha256_core
+//
+// fn main() [io]
+//     let st: Sha256 = sha256_core.new()
+//     let one: Sha256 = sha256_core.compress(st, Block { w: [0, 0, 0, 0,
+//         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] })
+//     println("one block absorbed")
+// ```
+pub fn new() -> Sha256
+    Sha256 {
+        h0: 0x6A09E667,
+        h1: 0xBB67AE85,
+        h2: 0x3C6EF372,
+        h3: 0xA54FF53A,
+        h4: 0x510E527F,
+        h5: 0x9B05688C,
+        h6: 0x1F83D9AB,
+        h7: 0x5BE0CD19,
+        len: 0
+    }

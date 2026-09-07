@@ -1,0 +1,26 @@
+// tests/alloc_probe.nv — the program `tests/orbit/test_crypto_nv.sh`
+// compiles to read the emitted LLVM for `novo_alloc`.
+//
+// It exists to make every function of the core appear in one module's
+// IR with its own name.  It is built with `--opt=0` for exactly that
+// reason: at the default optimisation level the whole thing inlines
+// into `novo_main`, there is nothing left to attribute an allocation
+// to, and an assertion that no core function allocates would pass
+// because no core function is there.
+//
+// The digests are printed rather than checked — the vector suites own
+// correctness. This one is here to be read as text, not run.
+
+use std.bytes
+use hashing
+
+fn main() [io]
+    let data = bytes.zeros(256)
+    let s = hashing.sha256_update(hashing.sha256_new(), data)
+    println(bytes.to_hex(hashing.sha256_finish(s, data, bytes.zeros(32))))
+    let t = hashing.sha512_update(hashing.sha512_new(), data)
+    println(bytes.to_hex(hashing.sha512_finish(t, data, bytes.zeros(64))))
+    let u = hashing.sha1_update(hashing.sha1_new(), data)
+    println(bytes.to_hex(hashing.sha1_finish(u, data, bytes.zeros(20))))
+    let v = hashing.md5_update(hashing.md5_new(), data)
+    println(bytes.to_hex(hashing.md5_finish(v, data, bytes.zeros(16))))

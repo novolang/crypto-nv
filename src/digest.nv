@@ -1,0 +1,300 @@
+// src/digest.nv — the `Bytes` layer: blocks in, digests out, padding,
+// and the comparison a caller must use on the way back.
+//
+// `word` is the pure word algebra and knows nothing about buffers.
+// This module is where a `Bytes` becomes a `Block` and where a state
+// becomes a digest, and it is deliberately the ONLY place in the
+// package where the two halves meet — which is what keeps the
+// compression cores free of the one type the embedded tier does not
+// admit.
+//
+// PADDING WITHOUT A SCRATCH BUFFER
+//
+// FIPS 180-4 §5.1 appends `0x80`, then zeros, then the message length
+// in bits.  The obvious way to build that is to copy the remainder
+// into a 64-byte buffer and write around it — and a 64-byte buffer is
+// exactly what a `@value` struct cannot hold a mutable copy of today
+// (the README's "What it cannot do yet" says why).  So the padded
+// block is never materialised: `pad_byte` ANSWERS what the byte at a
+// given position would be, and a block is sixteen calls to it.  Same
+// bytes, no buffer to allocate, own or clear.
+
+use std.bits
+use std.bytes
+
+// The sixteen big-endian 32-bit words of the block at `off`.
+//
+// SHA-256 and SHA-1 read their 512-bit block this way (FIPS 180-4
+// §6.2 and §6.1).  A word whose four bytes are not all present reads
+// as zero, which no caller in this package can reach: each of them has
+// already checked that a whole block is there.
+//
+// ```novo
+// use std.bytes
+// use digest
+//
+// fn main() [io]
+//     let raw = bytes.zeros(64)
+//     let b = digest.block_be32(bytes.set_u32_be(raw, 4, 2), 0)
+//     println("${b.w[1]}")   // 2
+// ```
+pub fn block_be32(data: Bytes, off: Int) -> Block
+    Block { w: [
+        bytes.u32_be_at(data, off + 0) ?? 0,
+        bytes.u32_be_at(data, off + 4) ?? 0,
+        bytes.u32_be_at(data, off + 8) ?? 0,
+        bytes.u32_be_at(data, off + 12) ?? 0,
+        bytes.u32_be_at(data, off + 16) ?? 0,
+        bytes.u32_be_at(data, off + 20) ?? 0,
+        bytes.u32_be_at(data, off + 24) ?? 0,
+        bytes.u32_be_at(data, off + 28) ?? 0,
+        bytes.u32_be_at(data, off + 32) ?? 0,
+        bytes.u32_be_at(data, off + 36) ?? 0,
+        bytes.u32_be_at(data, off + 40) ?? 0,
+        bytes.u32_be_at(data, off + 44) ?? 0,
+        bytes.u32_be_at(data, off + 48) ?? 0,
+        bytes.u32_be_at(data, off + 52) ?? 0,
+        bytes.u32_be_at(data, off + 56) ?? 0,
+        bytes.u32_be_at(data, off + 60) ?? 0
+    ] }
+
+// The sixteen little-endian 32-bit words of the block at `off`.
+//
+// MD5 alone among the four reads its block little-endian (RFC 1321
+// §3.4), which is the single reason this exists beside `block_be32`.
+pub fn block_le32(data: Bytes, off: Int) -> Block
+    Block { w: [
+        bytes.u32_le_at(data, off + 0) ?? 0,
+        bytes.u32_le_at(data, off + 4) ?? 0,
+        bytes.u32_le_at(data, off + 8) ?? 0,
+        bytes.u32_le_at(data, off + 12) ?? 0,
+        bytes.u32_le_at(data, off + 16) ?? 0,
+        bytes.u32_le_at(data, off + 20) ?? 0,
+        bytes.u32_le_at(data, off + 24) ?? 0,
+        bytes.u32_le_at(data, off + 28) ?? 0,
+        bytes.u32_le_at(data, off + 32) ?? 0,
+        bytes.u32_le_at(data, off + 36) ?? 0,
+        bytes.u32_le_at(data, off + 40) ?? 0,
+        bytes.u32_le_at(data, off + 44) ?? 0,
+        bytes.u32_le_at(data, off + 48) ?? 0,
+        bytes.u32_le_at(data, off + 52) ?? 0,
+        bytes.u32_le_at(data, off + 56) ?? 0,
+        bytes.u32_le_at(data, off + 60) ?? 0
+    ] }
+
+// The sixteen big-endian 64-bit words of the 1024-bit block at `off`.
+//
+// SHA-512's block is twice as wide as the other three (FIPS 180-4
+// §6.4) but still sixteen words, which is why one `Block` type serves
+// every hash in this package.
+pub fn block_be64(data: Bytes, off: Int) -> Block
+    Block { w: [
+        bytes.u64_be_at(data, off + 0) ?? 0,
+        bytes.u64_be_at(data, off + 8) ?? 0,
+        bytes.u64_be_at(data, off + 16) ?? 0,
+        bytes.u64_be_at(data, off + 24) ?? 0,
+        bytes.u64_be_at(data, off + 32) ?? 0,
+        bytes.u64_be_at(data, off + 40) ?? 0,
+        bytes.u64_be_at(data, off + 48) ?? 0,
+        bytes.u64_be_at(data, off + 56) ?? 0,
+        bytes.u64_be_at(data, off + 64) ?? 0,
+        bytes.u64_be_at(data, off + 72) ?? 0,
+        bytes.u64_be_at(data, off + 80) ?? 0,
+        bytes.u64_be_at(data, off + 88) ?? 0,
+        bytes.u64_be_at(data, off + 96) ?? 0,
+        bytes.u64_be_at(data, off + 104) ?? 0,
+        bytes.u64_be_at(data, off + 112) ?? 0,
+        bytes.u64_be_at(data, off + 120) ?? 0
+    ] }
+
+// The byte at position `i` of the padded final block group.
+//
+// The group is `plen` bytes — one block, or two when the remainder
+// leaves no room for the length field — and holds, in order: the `rem`
+// bytes of the message still unabsorbed (at `base` in `tail`), the
+// single `0x80` marker FIPS 180-4 §5.1.1 appends, zeros, and the
+// message length in bits as a big-endian field filling the last eight
+// bytes.
+//
+// It ANSWERS rather than writes, so nothing is built for a block that
+// is about to be read once and dropped.
+pub fn pad_byte(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, i: Int) -> Int
+    if i < rem
+        bytes.byte_at(tail, base + i) ?? 0
+    else if i == rem
+        0x80
+    else if i < plen - 8
+        0
+    else
+        bits.band(bits.shr(bit_len, 8 * (plen - 1 - i)), 0xFF)
+
+// The byte at position `i` of an MD5 padded block group.
+//
+// Identical to `pad_byte` except in the length field, which MD5 writes
+// least-significant byte first (RFC 1321 §3.2).
+pub fn pad_byte_le(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, i: Int) -> Int
+    if i < plen - 8
+        pad_byte(tail, base, rem, plen, bit_len, i)
+    else
+        bits.band(bits.shr(bit_len, 8 * (i - (plen - 8))), 0xFF)
+
+// One big-endian 32-bit word of the padded block group, at word `k`.
+pub fn pad_word_be32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, k: Int) -> Int
+    var v = 0
+    for j in 0..4
+        v = bits.bor(bits.shl(v, 8),
+                     pad_byte(tail, base, rem, plen, bit_len, k * 4 + j))
+    v
+
+// One little-endian 32-bit word of the padded block group, at word `k`.
+pub fn pad_word_le32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, k: Int) -> Int
+    var v = 0
+    for j in 0..4
+        v = bits.bor(bits.shl(v, 8),
+                     pad_byte_le(tail, base, rem, plen, bit_len, k * 4 + 3 - j))
+    v
+
+// One big-endian 64-bit word of the padded block group, at word `k`.
+//
+// SHA-512 reserves SIXTEEN bytes for its length field (FIPS 180-4
+// §5.1.2), of which this only ever fills the low eight: the high half
+// counts messages of 2^64 bits and upward, which no caller can hand
+// it.  `plen` here is the group length, so the field's last byte is at
+// `plen - 1` and its first at `plen - 8`.
+pub fn pad_word_be64(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, k: Int) -> Int
+    var v = 0
+    for j in 0..8
+        let i = k * 8 + j
+        let b = if i < plen - 16
+            pad_byte(tail, base, rem, plen, 0, i)
+        else if i < plen - 8
+            0
+        else
+            bits.band(bits.shr(bit_len, 8 * (plen - 1 - i)), 0xFF)
+        v = bits.bor(bits.shl(v, 8), b)
+    v
+
+// The padded final block group as a big-endian 32-bit block, at block
+// index `blk` — 0, or 1 for the second block a long remainder forces.
+pub fn pad_block_be32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, blk: Int) -> Block
+    Block { w: [
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 0),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 1),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 2),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 3),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 4),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 5),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 6),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 7),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 8),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 9),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 10),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 11),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 12),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 13),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 14),
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 15)
+    ] }
+
+// The padded final block group as a little-endian 32-bit block —
+// MD5's reading of the same bytes.
+pub fn pad_block_le32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, blk: Int) -> Block
+    Block { w: [
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 0),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 1),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 2),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 3),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 4),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 5),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 6),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 7),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 8),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 9),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 10),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 11),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 12),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 13),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 14),
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 15)
+    ] }
+
+// The padded final block group as a big-endian 64-bit block.
+pub fn pad_block_be64(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, blk: Int) -> Block
+    Block { w: [
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 0),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 1),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 2),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 3),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 4),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 5),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 6),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 7),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 8),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 9),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 10),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 11),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 12),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 13),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 14),
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 15)
+    ] }
+
+// How many blocks the padding of a `rem`-byte remainder occupies, for
+// a block of `block` bytes and a length field of `lenf` bytes.
+//
+// One block when the marker and the length still fit after the
+// remainder, two when they do not — the only two answers there are,
+// since `rem` is always less than one block.
+pub fn pad_blocks(rem: Int, block: Int, lenf: Int) -> Int
+    if rem + 1 + lenf <= block
+        1
+    else
+        2
+
+// One block of key material for HMAC: K' XOR the repeated pad byte.
+//
+// RFC 2104 §2 defines K' as the key zero-padded to the block length,
+// and the two hashes it drives start from K' XOR 0x36 and K' XOR 0x5C.
+// A key SHORTER than the block reads as zero past its end, so the
+// padding is not a step here — it falls out of the read.  A key LONGER
+// than the block must be replaced by its own digest before it gets
+// here; each `hmac` does that with its own hash, which is why this
+// takes the block length rather than choosing one.
+pub fn hmac_pad_block(key: Bytes, block_bytes: Int, pad: Int) -> Bytes
+    var b = bytes.zeros(block_bytes)
+    for i in 0..block_bytes
+        b = bytes.set_u8(b, i, bits.xor(bytes.byte_at(key, i) ?? 0, pad))
+    b
+
+// Compare two digests or tags without leaking WHERE they differ.
+//
+// `==` on two `Bytes` stops at the first differing byte, and the time
+// it took says how many bytes matched.  Against an attacker who can
+// submit a tag and measure the answer, that is enough to recover a
+// valid tag one byte at a time — the classic forgery, and the reason
+// RFC 2104 §6 tells you to compare this way instead.
+//
+// This reads BOTH buffers whole and folds every difference into one
+// accumulator, so the work depends on the lengths and never on the
+// contents.  Buffers of different lengths are not equal and that much
+// is answered at once: a length is not the secret.
+//
+// ```novo
+// use std.bytes
+// use digest
+//
+// fn main() [io]
+//     let a = bytes.from_hex("0badc0de") ?? bytes.zeros(4)
+//     println("${digest.ct_eq(a, a)}")                    // true
+//     println("${digest.ct_eq(a, bytes.zeros(4))}")       // false
+// ```
+pub fn ct_eq(a: Bytes, b: Bytes) -> Bool
+    let n = bytes.len(a)
+    if n != bytes.len(b)
+        false
+    else
+        var diff = 0
+        for i in 0..n
+            diff = bits.bor(diff, bits.xor(bytes.byte_at(a, i) ?? 0,
+                                           bytes.byte_at(b, i) ?? 0))
+        diff == 0

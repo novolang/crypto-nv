@@ -1,0 +1,240 @@
+// tests/word_tests.nv — the word algebra and the `Bytes` layer, one
+// piece at a time.
+//
+// Run from the package directory:
+//
+//   novo test tests/word_tests.nv
+//
+// The vector suites next door prove the whole thing computes the right
+// digest.  This one exists so that when they go red, the failure names
+// the piece that broke rather than the algorithm that used it.
+
+
+use std.test
+use std.bytes
+
+// A test input built from hex, so nothing here depends on how a `Str`
+// literal escapes a byte.  `from_hex` cannot fail on a literal this
+// file generated, and the fallback keeps the type `Bytes` rather than
+// `?Bytes`.
+fn hexb(h: Str) -> Bytes
+    bytes.from_hex(h) ?? bytes.zeros(0)
+
+// `n` bytes of the byte `v` — the shape RFC 2202 and RFC 4231 write
+// their keys and data in.
+fn rep(n: Int, v: Int) -> Bytes
+    var b = bytes.zeros(n)
+    for i in 0..n
+        b = bytes.set_u8(b, i, v)
+    b
+
+use std.bits
+use word
+use digest
+use hashing
+use sha256_core
+
+// The rotations, against the property that defines them: rotating by
+// `n` and then by `32 - n` is the identity, and a rotate never loses a
+// bit the way a shift does.
+@test
+fn test_rotr32_and_rotl32_are_inverses()
+    test.assert_eq(word.rotr32(0x80000000, 1), 0x40000000)
+    test.assert_eq(word.rotr32(0x00000001, 1), 0x80000000)
+    test.assert_eq(word.rotl32(0x80000000, 1), 0x00000001)
+    test.assert_eq(word.rotr32(0xFFFFFFFF, 8), 0xFFFFFFFF)
+    for n in 1..32
+        test.assert_eq(word.rotl32(word.rotr32(0x12345678, n), n), 0x12345678)
+
+// `shr32` drops what it shifts off; `rotr32` brings it back round.
+// The pair is the difference between σ and Σ in FIPS 180-4 §4.1.2, so
+// confusing them is a real way to write a wrong hash.
+@test
+fn test_shr32_drops_what_rotr32_keeps()
+    test.assert_eq(word.shr32(0x00000001, 1), 0)
+    test.assert_eq(word.rotr32(0x00000001, 1), 0x80000000)
+    test.assert_eq(word.shr32(0xFF000000, 24), 0xFF)
+
+// `mask32` keeps exactly the low 32 bits.
+@test
+fn test_mask32_keeps_the_low_word()
+    test.assert_eq(word.mask32(0x1FFFFFFFF), 0xFFFFFFFF)
+    test.assert_eq(word.mask32(0x100000000), 0)
+    test.assert_eq(word.mask32(0xFFFFFFFF), 0xFFFFFFFF)
+
+// The 64-bit rotate, against the same inverse property.
+@test
+fn test_rotr64_round_trips()
+    test.assert_eq(word.rotr64(1, 1), bits.shl(1, 63))
+    for n in 1..64
+        test.assert_eq(word.rotr64(word.rotr64(0x0123456789ABCDEF, n), 64 - n),
+                       0x0123456789ABCDEF)
+
+// The wrapping add wraps rather than trapping, which is the whole
+// reason it exists: `+` on these values would abort the program.
+@test
+fn test_wadd64_wraps_where_plus_would_trap()
+    test.assert_eq(word.wadd64(-1, 1), 0)
+    test.assert_eq(word.wadd64(-1, 2), 1)
+    test.assert_eq(word.wadd64(bits.shl(1, 63), bits.shl(1, 63)), 0)
+    test.assert_eq(word.wadd64(5, 7), 12)
+
+// A block read back word by word is the bytes that went in.
+@test
+fn test_block_readers_are_the_bytes_they_were_given()
+    var buf = bytes.zeros(128)
+    for i in 0..128
+        buf = bytes.set_u8(buf, i, i)
+    let be = digest.block_be32(buf, 0)
+    test.assert_eq(be.w[0], 0x00010203)
+    test.assert_eq(be.w[15], 0x3C3D3E3F)
+    let le = digest.block_le32(buf, 0)
+    test.assert_eq(le.w[0], 0x03020100)
+    let be64 = digest.block_be64(buf, 0)
+    test.assert_eq(be64.w[0], 0x0001020304050607)
+
+// The padding: the marker lands right after the message, the middle is
+// zero, and the length field is the message length in BITS.
+@test
+fn test_pad_byte_places_marker_zeros_and_length()
+    let msg = hexb("616263")
+    test.assert_eq(digest.pad_byte(msg, 0, 3, 64, 24, 0), 0x61)
+    test.assert_eq(digest.pad_byte(msg, 0, 3, 64, 24, 2), 0x63)
+    test.assert_eq(digest.pad_byte(msg, 0, 3, 64, 24, 3), 0x80)
+    test.assert_eq(digest.pad_byte(msg, 0, 3, 64, 24, 4), 0)
+    test.assert_eq(digest.pad_byte(msg, 0, 3, 64, 24, 55), 0)
+    test.assert_eq(digest.pad_byte(msg, 0, 3, 64, 24, 63), 24)
+    // MD5 writes the same length little-endian.
+    test.assert_eq(digest.pad_byte_le(msg, 0, 3, 64, 24, 56), 24)
+    test.assert_eq(digest.pad_byte_le(msg, 0, 3, 64, 24, 63), 0)
+
+// One padding block when the marker and the length still fit, two when
+// they do not — the boundary FIPS 180-4 §5.1.1 draws at 56 bytes.
+@test
+fn test_pad_blocks_counts_the_boundary()
+    test.assert_eq(digest.pad_blocks(0, 64, 8), 1)
+    test.assert_eq(digest.pad_blocks(55, 64, 8), 1)
+    test.assert_eq(digest.pad_blocks(56, 64, 8), 2)
+    test.assert_eq(digest.pad_blocks(63, 64, 8), 2)
+    test.assert_eq(digest.pad_blocks(111, 128, 16), 1)
+    test.assert_eq(digest.pad_blocks(112, 128, 16), 2)
+
+// A padded block, word by word, against the bytes FIPS 180-4 §5.1.1
+// says are there for the message "abc".
+@test
+fn test_pad_block_be32_is_the_padded_block()
+    let blk = digest.pad_block_be32(hexb("616263"), 0, 3, 64, 24, 0)
+    test.assert_eq(blk.w[0], 0x61626380)
+    test.assert_eq(blk.w[1], 0)
+    test.assert_eq(blk.w[14], 0)
+    test.assert_eq(blk.w[15], 24)
+
+// The little-endian and 64-bit padded blocks, for the two hashes that
+// read them that way.
+@test
+fn test_pad_block_le32_and_be64()
+    let le = digest.pad_block_le32(hexb("616263"), 0, 3, 64, 24, 0)
+    test.assert_eq(le.w[0], 0x80636261)
+    test.assert_eq(le.w[14], 24)
+    test.assert_eq(le.w[15], 0)
+    let be = digest.pad_block_be64(hexb("616263"), 0, 3, 128, 24, 0)
+    test.assert_eq(be.w[0], 0x6162638000000000)
+    test.assert_eq(be.w[14], 0)
+    test.assert_eq(be.w[15], 24)
+    test.assert_eq(digest.pad_word_be64(hexb("616263"), 0, 3, 128, 24, 15), 24)
+
+// The words the block readers and the padder produce, one at a time.
+@test
+fn test_pad_words_assemble_their_bytes()
+    let msg = hexb("616263")
+    test.assert_eq(digest.pad_word_be32(msg, 0, 3, 64, 24, 0), 0x61626380)
+    test.assert_eq(digest.pad_word_le32(msg, 0, 3, 64, 24, 0), 0x80636261)
+
+// The key block RFC 2104 §2 defines: the key XOR the pad byte, and the
+// pad byte alone past the end of a short key.
+@test
+fn test_hmac_pad_block_pads_a_short_key_with_the_pad_byte()
+    let b = digest.hmac_pad_block(hexb("0102"), 64, 0x36)
+    test.assert_eq(bytes.len(b), 64)
+    test.assert_eq(bytes.byte_at(b, 0) ?? 0, 0x37)
+    test.assert_eq(bytes.byte_at(b, 1) ?? 0, 0x34)
+    test.assert_eq(bytes.byte_at(b, 2) ?? 0, 0x36)
+    test.assert_eq(bytes.byte_at(b, 63) ?? 0, 0x36)
+
+// The comparison: equal for equal buffers, unequal for a single
+// changed byte anywhere, and never equal across lengths.
+@test
+fn test_ct_eq_answers_equality()
+    let a = hexb("00112233445566778899aabbccddeeff")
+    test.assert_true(digest.ct_eq(a, a), "a buffer equals itself")
+    test.assert_true(digest.ct_eq(bytes.zeros(0), bytes.zeros(0)),
+                     "two empty buffers are equal")
+    test.assert_false(digest.ct_eq(a, bytes.set_u8(hexb("00112233445566778899aabbccddeeff"), 0, 1)),
+                      "a difference in the first byte is seen")
+    test.assert_false(digest.ct_eq(a, bytes.set_u8(hexb("00112233445566778899aabbccddeeff"), 15, 0)),
+                      "a difference in the last byte is seen")
+    test.assert_false(digest.ct_eq(a, bytes.slice(a, 0, 15)),
+                      "different lengths are never equal")
+
+// Every byte position, so the fold cannot be skipping one.
+@test
+fn test_ct_eq_sees_a_difference_at_every_position()
+    let base = bytes.zeros(32)
+    for i in 0..32
+        test.assert_false(digest.ct_eq(base, bytes.set_u8(bytes.zeros(32), i, 1)),
+                          "a difference is seen wherever it is")
+
+// The four compression functions, driven directly the way firmware
+// does — no `Bytes` anywhere — against the digest the host path
+// produces for the same one-block message.
+//
+// This is the ONLY test that calls `compress` itself, and it is what
+// says the embedded entry point and the streaming one compute the same
+// function rather than merely both existing.
+@test
+fn test_compress_drives_the_cores_without_bytes()
+    // "abc" padded per FIPS 180-4 §5.1.1: the message, the 0x80
+    // marker, zeros, and 24 bits of length.
+    let blk = Block { w: [0x61626380, 0, 0, 0, 0, 0, 0, 0,
+                          0, 0, 0, 0, 0, 0, 0, 24] }
+    let a = sha256_core.compress(sha256_core.new(), blk)
+    test.assert_eq(a.h0, 0xBA7816BF)
+    test.assert_eq(a.h7, 0xF20015AD)
+
+    let c = sha1_core.compress(sha1_core.new(), blk)
+    test.assert_eq(c.h0, 0xA9993E36)
+    test.assert_eq(c.h4, 0x9CD0D89D)
+
+    // MD5 reads its block little-endian, so the same message is a
+    // different set of words.
+    let dblk = Block { w: [0x80636261, 0, 0, 0, 0, 0, 0, 0,
+                           0, 0, 0, 0, 0, 0, 24, 0] }
+    let d = md5_core.compress(md5_core.new(), dblk)
+    test.assert_eq(d.a, 0x98500190)
+
+    // SHA-512's block is 1024 bits, so "abc" pads into sixteen 64-bit
+    // words rather than sixteen 32-bit ones.
+    let bblk = Block { w: [0x6162638000000000, 0, 0, 0, 0, 0, 0, 0,
+                           0, 0, 0, 0, 0, 0, 0, 24] }
+    let b = sha512_core.compress(sha512_core.new(), bblk)
+    test.assert_eq(b.h0, -2472698702324467014)
+
+// The state is nine words with nothing absorbed, and `new` is what
+// FIPS 180-4 §5.3.3 says it is.
+@test
+fn test_new_is_the_standard_initial_state()
+    let st = hashing.sha256_new()
+    test.assert_eq(st.h0, 0x6A09E667)
+    test.assert_eq(st.h7, 0x5BE0CD19)
+    test.assert_eq(st.len, 0)
+    test.assert_eq(hashing.SHA256_DIGEST_BYTES, 32)
+    test.assert_eq(hashing.SHA256_BLOCK_BYTES, 64)
+
+// `finish` writes into the buffer it was given and hands it back, so a
+// caller can keep one buffer for a run of digests.
+@test
+fn test_finish_writes_into_the_callers_buffer()
+    let out = bytes.zeros(32)
+    let d = hashing.sha256_finish(hashing.sha256_new(), "abc", out)
+    test.assert_eq(bytes.len(d), 32)
+    test.assert_eq_str(bytes.to_hex(d), bytes.to_hex(hashing.sha256("abc")))

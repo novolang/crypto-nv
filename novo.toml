@@ -1,0 +1,21 @@
+[package]
+name        = "crypto-nv"
+version     = "0.1.0"
+description = "Cryptographic hashes and HMAC in pure Novo: SHA-256, SHA-512, and SHA-1 and MD5 for reading formats that still specify them.  The digest state is a @value struct, so a hash runs on the stack with the heap untouched."
+license     = "Apache-2.0"
+stability   = "experimental"
+category    = "crypto"
+tags        = ["sha256", "sha512", "sha1", "md5", "hmac", "fips-180-4", "rfc-2104", "hash", "digest"]
+repository  = "https://github.com/novolang/crypto-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.8.4"
+
+# No `main`: this is a library.  `novo pkg build` type- and
+# effect-checks every module under src/ and writes no binary.
+
+[docs.pages]
+"README.md" = "Hashing and authenticating without allocating"
+
+[dependencies]
+# None, and that is a property of the package rather than an accident.
+# Everything here is std.bits, std.bytes and the language.

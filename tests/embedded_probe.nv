@@ -1,0 +1,67 @@
+// tests/embedded_probe.nv — the package's embedded claim, as a program
+// that either builds for a Cortex-M or does not.
+//
+// `tests/orbit/test_crypto_nv.sh` copies this and the four `*_core`
+// modules into a package of their own and runs
+//
+//   novo build --target=nrf52-qemu src/probe.nv
+//
+// which produces a real Cortex-M4 ELF or fails.  Two things are being
+// asserted at once.  The tier: `--target=nrf52-qemu` stamps
+// `@tier(embedded)` on every function it compiles, so the checker walks
+// `word` and all four compression cores and refuses a list literal, a
+// `Str` concatenation, a `Bytes` call or an unbounded `while`.  And the
+// link: SHA-512 does 64-bit arithmetic on a 32-bit core, which lowers
+// to EABI helper calls that either exist in the embedded runtime or do
+// not — a question no amount of host testing asks.
+//
+// The cores are copied WITHOUT `hashing` and `digest`, which is the
+// point of the split rather than a convenience here: those two know
+// about `Bytes`, and one host-only function anywhere in a compilation
+// unit is an undefined symbol at embedded link time whether or not the
+// firmware ever calls it.
+//
+// What this deliberately does not do is check the digest.  The host
+// suites own correctness; this program owns "it builds for a device,
+// and all four of them link".
+
+use sha256_core
+use sha512_core
+use sha1_core
+use md5_core
+
+// One block of a message, built the way firmware would build it: from
+// values it already holds, with nothing allocated to stage them.
+//
+// These sixteen words are "abc" padded per FIPS 180-4 §5.1.1 — the
+// same block the host path feeds its compression function, which is
+// what makes the two comparable.
+fn abc_block() -> Block
+    Block { w: [0x61626380, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 24] }
+
+fn main() [hw]
+    // Two blocks per hash, so the state hand-off between calls is
+    // compiled and tier-checked and not just one call in isolation.
+    //
+    // Each step is bound with its type written out because a call into
+    // another module does not have its return type inferred in a
+    // single-file build.  Inside a package built as one unit — which is
+    // what every host suite does — none of these annotations is needed.
+    let a0: Sha256 = sha256_core.new()
+    let a1: Sha256 = sha256_core.compress(a0, abc_block())
+    let a2: Sha256 = sha256_core.compress(a1, abc_block())
+
+    let b0: Sha512 = sha512_core.new()
+    let b1: Sha512 = sha512_core.compress(b0, abc_block())
+    let b2: Sha512 = sha512_core.compress(b1, abc_block())
+
+    let c0: Sha1 = sha1_core.new()
+    let c1: Sha1 = sha1_core.compress(c0, abc_block())
+    let c2: Sha1 = sha1_core.compress(c1, abc_block())
+
+    let d0: Md5 = md5_core.new()
+    let d1: Md5 = md5_core.compress(d0, abc_block())
+    let d2: Md5 = md5_core.compress(d1, abc_block())
+
+    hal.uart.write("crypto-nv: four cores, two blocks each\n")

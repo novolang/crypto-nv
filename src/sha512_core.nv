@@ -1,0 +1,318 @@
+// src/sha512_core.nv — SHA-512 (FIPS 180-4 §6.4).
+//
+// A 512-bit digest over 1024-bit blocks, 80 rounds, 64-bit words.
+// Structurally SHA-256 at twice the width with different rotation
+// amounts — and one real difference: a word fills the whole `Int`, so
+// the additions go through `word.wadd64` rather than `+`, which would
+// trap on the overflow the algorithm depends on.
+//
+// The round constants are 64-bit, and the ones with the top bit set
+// are written as negative `Int` literals: an `Int` is two's
+// complement and only the bit pattern is meaningful, so `-...` here
+// is the same sixty-four bits FIPS 180-4 §4.2.3 prints as hex.  They
+// are generated from the cube roots the standard defines them by, not
+// transcribed.
+
+use std.bits
+use word
+
+// This module is the half of SHA-512 that runs on a device: the
+// state, its initial value, and the compression function.  It
+// imports `word` and nothing else, and every function in it is
+// `@tier(embedded)` — which is what lets it be cross-compiled
+// on its own, with `hashing` and its `Bytes` left behind on the
+// host.
+
+
+// The SHA-512 state: eight 64-bit chaining words (FIPS 180-4 §5.3.5)
+// and the number of bytes absorbed.  A `@value` struct for the same
+// reason `sha256.Sha256` is one — inline storage, no cell, no
+// reference count.
+pub @value
+struct Sha512
+    h0: Int
+    h1: Int
+    h2: Int
+    h3: Int
+    h4: Int
+    h5: Int
+    h6: Int
+    h7: Int
+    len: Int
+
+// The eight working variables a..h of FIPS 180-4 §6.4.2.
+@value
+struct Working512
+    a: Int
+    b: Int
+    c: Int
+    d: Int
+    e: Int
+    f: Int
+    g: Int
+    h: Int
+
+// Ch and Maj, unchanged from SHA-256 except in width — and at 64 bits
+// no mask is needed, since the whole word is the value.
+@tier(embedded)
+fn ch(x: Int, y: Int, z: Int) -> Int
+    bits.xor(bits.band(x, y), bits.band(bits.bnot(x), z))
+
+@tier(embedded)
+fn maj(x: Int, y: Int, z: Int) -> Int
+    bits.xor(bits.xor(bits.band(x, y), bits.band(x, z)), bits.band(y, z))
+
+// The four rotation functions of FIPS 180-4 §4.1.3 — the same shapes
+// as §4.1.2 with the wider rotation amounts.
+@tier(embedded)
+fn big_sigma0(x: Int) -> Int
+    bits.xor(bits.xor(word.rotr64(x, 28), word.rotr64(x, 34)), word.rotr64(x, 39))
+
+@tier(embedded)
+fn big_sigma1(x: Int) -> Int
+    bits.xor(bits.xor(word.rotr64(x, 14), word.rotr64(x, 18)), word.rotr64(x, 41))
+
+@tier(embedded)
+fn small_sigma0(x: Int) -> Int
+    bits.xor(bits.xor(word.rotr64(x, 1), word.rotr64(x, 8)), bits.shr(x, 7))
+
+@tier(embedded)
+fn small_sigma1(x: Int) -> Int
+    bits.xor(bits.xor(word.rotr64(x, 19), word.rotr64(x, 61)), bits.shr(x, 6))
+
+// One round (FIPS 180-4 §6.4.2 step 3).
+//
+// Every addition is modulo 2^64 and `+` would trap on it, so all five
+// go through `word.wadd64`.
+@tier(embedded)
+fn round(s: Working512, k: Int, w: Int) -> Working512
+    let t1 = word.wadd64(word.wadd64(word.wadd64(s.h, big_sigma1(s.e)),
+                                     word.wadd64(ch(s.e, s.f, s.g), k)), w)
+    let t2 = word.wadd64(big_sigma0(s.a), maj(s.a, s.b, s.c))
+    Working512 { a: word.wadd64(t1, t2), b: s.a, c: s.b, d: s.c,
+           e: word.wadd64(s.d, t1), f: s.e, g: s.f, h: s.g }
+
+
+// Absorb one 1024-bit block.
+//
+// The schedule is written out for the reason `sha256.compress` gives:
+// the recurrence needs eighty words and neither an inline array nor a
+// heap one can carry it here.
+//
+// This is PUBLIC, and it is the entry point for a caller that has no
+// `Bytes` to give: everything it touches — `@value` structs, inline
+// arrays, `bits.*`, `int.wrapping_add`, bounded `for` — is admitted at
+// `@tier(embedded)`, so firmware holding a block in a `static [u8; N]`
+// can drive the hash with the heap untouched.  `update` and `finish`
+// are the same function with the buffer handling that the host tier
+// makes cheap.
+pub @tier(embedded)
+fn compress(st: Sha512, b: Block) -> Sha512
+    let w0 = b.w[0]
+    let w1 = b.w[1]
+    let w2 = b.w[2]
+    let w3 = b.w[3]
+    let w4 = b.w[4]
+    let w5 = b.w[5]
+    let w6 = b.w[6]
+    let w7 = b.w[7]
+    let w8 = b.w[8]
+    let w9 = b.w[9]
+    let w10 = b.w[10]
+    let w11 = b.w[11]
+    let w12 = b.w[12]
+    let w13 = b.w[13]
+    let w14 = b.w[14]
+    let w15 = b.w[15]
+
+    // W[t] = σ1(W[t-2]) + W[t-7] + σ0(W[t-15]) + W[t-16]  (§6.4.2 step 1).
+    let w16 = word.wadd64(word.wadd64(small_sigma1(w14), w9), word.wadd64(small_sigma0(w1), w0))
+    let w17 = word.wadd64(word.wadd64(small_sigma1(w15), w10), word.wadd64(small_sigma0(w2), w1))
+    let w18 = word.wadd64(word.wadd64(small_sigma1(w16), w11), word.wadd64(small_sigma0(w3), w2))
+    let w19 = word.wadd64(word.wadd64(small_sigma1(w17), w12), word.wadd64(small_sigma0(w4), w3))
+    let w20 = word.wadd64(word.wadd64(small_sigma1(w18), w13), word.wadd64(small_sigma0(w5), w4))
+    let w21 = word.wadd64(word.wadd64(small_sigma1(w19), w14), word.wadd64(small_sigma0(w6), w5))
+    let w22 = word.wadd64(word.wadd64(small_sigma1(w20), w15), word.wadd64(small_sigma0(w7), w6))
+    let w23 = word.wadd64(word.wadd64(small_sigma1(w21), w16), word.wadd64(small_sigma0(w8), w7))
+    let w24 = word.wadd64(word.wadd64(small_sigma1(w22), w17), word.wadd64(small_sigma0(w9), w8))
+    let w25 = word.wadd64(word.wadd64(small_sigma1(w23), w18), word.wadd64(small_sigma0(w10), w9))
+    let w26 = word.wadd64(word.wadd64(small_sigma1(w24), w19), word.wadd64(small_sigma0(w11), w10))
+    let w27 = word.wadd64(word.wadd64(small_sigma1(w25), w20), word.wadd64(small_sigma0(w12), w11))
+    let w28 = word.wadd64(word.wadd64(small_sigma1(w26), w21), word.wadd64(small_sigma0(w13), w12))
+    let w29 = word.wadd64(word.wadd64(small_sigma1(w27), w22), word.wadd64(small_sigma0(w14), w13))
+    let w30 = word.wadd64(word.wadd64(small_sigma1(w28), w23), word.wadd64(small_sigma0(w15), w14))
+    let w31 = word.wadd64(word.wadd64(small_sigma1(w29), w24), word.wadd64(small_sigma0(w16), w15))
+    let w32 = word.wadd64(word.wadd64(small_sigma1(w30), w25), word.wadd64(small_sigma0(w17), w16))
+    let w33 = word.wadd64(word.wadd64(small_sigma1(w31), w26), word.wadd64(small_sigma0(w18), w17))
+    let w34 = word.wadd64(word.wadd64(small_sigma1(w32), w27), word.wadd64(small_sigma0(w19), w18))
+    let w35 = word.wadd64(word.wadd64(small_sigma1(w33), w28), word.wadd64(small_sigma0(w20), w19))
+    let w36 = word.wadd64(word.wadd64(small_sigma1(w34), w29), word.wadd64(small_sigma0(w21), w20))
+    let w37 = word.wadd64(word.wadd64(small_sigma1(w35), w30), word.wadd64(small_sigma0(w22), w21))
+    let w38 = word.wadd64(word.wadd64(small_sigma1(w36), w31), word.wadd64(small_sigma0(w23), w22))
+    let w39 = word.wadd64(word.wadd64(small_sigma1(w37), w32), word.wadd64(small_sigma0(w24), w23))
+    let w40 = word.wadd64(word.wadd64(small_sigma1(w38), w33), word.wadd64(small_sigma0(w25), w24))
+    let w41 = word.wadd64(word.wadd64(small_sigma1(w39), w34), word.wadd64(small_sigma0(w26), w25))
+    let w42 = word.wadd64(word.wadd64(small_sigma1(w40), w35), word.wadd64(small_sigma0(w27), w26))
+    let w43 = word.wadd64(word.wadd64(small_sigma1(w41), w36), word.wadd64(small_sigma0(w28), w27))
+    let w44 = word.wadd64(word.wadd64(small_sigma1(w42), w37), word.wadd64(small_sigma0(w29), w28))
+    let w45 = word.wadd64(word.wadd64(small_sigma1(w43), w38), word.wadd64(small_sigma0(w30), w29))
+    let w46 = word.wadd64(word.wadd64(small_sigma1(w44), w39), word.wadd64(small_sigma0(w31), w30))
+    let w47 = word.wadd64(word.wadd64(small_sigma1(w45), w40), word.wadd64(small_sigma0(w32), w31))
+    let w48 = word.wadd64(word.wadd64(small_sigma1(w46), w41), word.wadd64(small_sigma0(w33), w32))
+    let w49 = word.wadd64(word.wadd64(small_sigma1(w47), w42), word.wadd64(small_sigma0(w34), w33))
+    let w50 = word.wadd64(word.wadd64(small_sigma1(w48), w43), word.wadd64(small_sigma0(w35), w34))
+    let w51 = word.wadd64(word.wadd64(small_sigma1(w49), w44), word.wadd64(small_sigma0(w36), w35))
+    let w52 = word.wadd64(word.wadd64(small_sigma1(w50), w45), word.wadd64(small_sigma0(w37), w36))
+    let w53 = word.wadd64(word.wadd64(small_sigma1(w51), w46), word.wadd64(small_sigma0(w38), w37))
+    let w54 = word.wadd64(word.wadd64(small_sigma1(w52), w47), word.wadd64(small_sigma0(w39), w38))
+    let w55 = word.wadd64(word.wadd64(small_sigma1(w53), w48), word.wadd64(small_sigma0(w40), w39))
+    let w56 = word.wadd64(word.wadd64(small_sigma1(w54), w49), word.wadd64(small_sigma0(w41), w40))
+    let w57 = word.wadd64(word.wadd64(small_sigma1(w55), w50), word.wadd64(small_sigma0(w42), w41))
+    let w58 = word.wadd64(word.wadd64(small_sigma1(w56), w51), word.wadd64(small_sigma0(w43), w42))
+    let w59 = word.wadd64(word.wadd64(small_sigma1(w57), w52), word.wadd64(small_sigma0(w44), w43))
+    let w60 = word.wadd64(word.wadd64(small_sigma1(w58), w53), word.wadd64(small_sigma0(w45), w44))
+    let w61 = word.wadd64(word.wadd64(small_sigma1(w59), w54), word.wadd64(small_sigma0(w46), w45))
+    let w62 = word.wadd64(word.wadd64(small_sigma1(w60), w55), word.wadd64(small_sigma0(w47), w46))
+    let w63 = word.wadd64(word.wadd64(small_sigma1(w61), w56), word.wadd64(small_sigma0(w48), w47))
+    let w64 = word.wadd64(word.wadd64(small_sigma1(w62), w57), word.wadd64(small_sigma0(w49), w48))
+    let w65 = word.wadd64(word.wadd64(small_sigma1(w63), w58), word.wadd64(small_sigma0(w50), w49))
+    let w66 = word.wadd64(word.wadd64(small_sigma1(w64), w59), word.wadd64(small_sigma0(w51), w50))
+    let w67 = word.wadd64(word.wadd64(small_sigma1(w65), w60), word.wadd64(small_sigma0(w52), w51))
+    let w68 = word.wadd64(word.wadd64(small_sigma1(w66), w61), word.wadd64(small_sigma0(w53), w52))
+    let w69 = word.wadd64(word.wadd64(small_sigma1(w67), w62), word.wadd64(small_sigma0(w54), w53))
+    let w70 = word.wadd64(word.wadd64(small_sigma1(w68), w63), word.wadd64(small_sigma0(w55), w54))
+    let w71 = word.wadd64(word.wadd64(small_sigma1(w69), w64), word.wadd64(small_sigma0(w56), w55))
+    let w72 = word.wadd64(word.wadd64(small_sigma1(w70), w65), word.wadd64(small_sigma0(w57), w56))
+    let w73 = word.wadd64(word.wadd64(small_sigma1(w71), w66), word.wadd64(small_sigma0(w58), w57))
+    let w74 = word.wadd64(word.wadd64(small_sigma1(w72), w67), word.wadd64(small_sigma0(w59), w58))
+    let w75 = word.wadd64(word.wadd64(small_sigma1(w73), w68), word.wadd64(small_sigma0(w60), w59))
+    let w76 = word.wadd64(word.wadd64(small_sigma1(w74), w69), word.wadd64(small_sigma0(w61), w60))
+    let w77 = word.wadd64(word.wadd64(small_sigma1(w75), w70), word.wadd64(small_sigma0(w62), w61))
+    let w78 = word.wadd64(word.wadd64(small_sigma1(w76), w71), word.wadd64(small_sigma0(w63), w62))
+    let w79 = word.wadd64(word.wadd64(small_sigma1(w77), w72), word.wadd64(small_sigma0(w64), w63))
+
+    var s = Working512 { a: st.h0, b: st.h1, c: st.h2, d: st.h3,
+                   e: st.h4, f: st.h5, g: st.h6, h: st.h7 }
+
+    // The eighty rounds, each with its constant from §4.2.3.
+    s = round(s, 0x428A2F98D728AE22, w0)
+    s = round(s, 0x7137449123EF65CD, w1)
+    s = round(s, -5349999486874862801, w2)
+    s = round(s, -1606136188198331460, w3)
+    s = round(s, 0x3956C25BF348B538, w4)
+    s = round(s, 0x59F111F1B605D019, w5)
+    s = round(s, -7908458776815382629, w6)
+    s = round(s, -6116909921290321640, w7)
+    s = round(s, -2880145864133508542, w8)
+    s = round(s, 0x12835B0145706FBE, w9)
+    s = round(s, 0x243185BE4EE4B28C, w10)
+    s = round(s, 0x550C7DC3D5FFB4E2, w11)
+    s = round(s, 0x72BE5D74F27B896F, w12)
+    s = round(s, -9160688886553864527, w13)
+    s = round(s, -7215885187991268811, w14)
+    s = round(s, -4495734319001033068, w15)
+    s = round(s, -1973867731355612462, w16)
+    s = round(s, -1171420211273849373, w17)
+    s = round(s, 0x0FC19DC68B8CD5B5, w18)
+    s = round(s, 0x240CA1CC77AC9C65, w19)
+    s = round(s, 0x2DE92C6F592B0275, w20)
+    s = round(s, 0x4A7484AA6EA6E483, w21)
+    s = round(s, 0x5CB0A9DCBD41FBD4, w22)
+    s = round(s, 0x76F988DA831153B5, w23)
+    s = round(s, -7476448914759557205, w24)
+    s = round(s, -6327057829258317296, w25)
+    s = round(s, -5763719355590565569, w26)
+    s = round(s, -4658551843659510044, w27)
+    s = round(s, -4116276920077217854, w28)
+    s = round(s, -3051310485924567259, w29)
+    s = round(s, 0x06CA6351E003826F, w30)
+    s = round(s, 0x142929670A0E6E70, w31)
+    s = round(s, 0x27B70A8546D22FFC, w32)
+    s = round(s, 0x2E1B21385C26C926, w33)
+    s = round(s, 0x4D2C6DFC5AC42AED, w34)
+    s = round(s, 0x53380D139D95B3DF, w35)
+    s = round(s, 0x650A73548BAF63DE, w36)
+    s = round(s, 0x766A0ABB3C77B2A8, w37)
+    s = round(s, -9096487096722542874, w38)
+    s = round(s, -7894198246740708037, w39)
+    s = round(s, -6719396339535248540, w40)
+    s = round(s, -6333637450476146687, w41)
+    s = round(s, -4446306890439682159, w42)
+    s = round(s, -4076793802049405392, w43)
+    s = round(s, -3345356375505022440, w44)
+    s = round(s, -2983346525034927856, w45)
+    s = round(s, -860691631967231958, w46)
+    s = round(s, 0x106AA07032BBD1B8, w47)
+    s = round(s, 0x19A4C116B8D2D0C8, w48)
+    s = round(s, 0x1E376C085141AB53, w49)
+    s = round(s, 0x2748774CDF8EEB99, w50)
+    s = round(s, 0x34B0BCB5E19B48A8, w51)
+    s = round(s, 0x391C0CB3C5C95A63, w52)
+    s = round(s, 0x4ED8AA4AE3418ACB, w53)
+    s = round(s, 0x5B9CCA4F7763E373, w54)
+    s = round(s, 0x682E6FF3D6B2B8A3, w55)
+    s = round(s, 0x748F82EE5DEFB2FC, w56)
+    s = round(s, 0x78A5636F43172F60, w57)
+    s = round(s, -8878714635349349518, w58)
+    s = round(s, -8302665154208450068, w59)
+    s = round(s, -8016688836872298968, w60)
+    s = round(s, -6606660893046293015, w61)
+    s = round(s, -4685533653050689259, w62)
+    s = round(s, -4147400797238176981, w63)
+    s = round(s, -3880063495543823972, w64)
+    s = round(s, -3348786107499101689, w65)
+    s = round(s, -1523767162380948706, w66)
+    s = round(s, -757361751448694408, w67)
+    s = round(s, 0x06F067AA72176FBA, w68)
+    s = round(s, 0x0A637DC5A2C898A6, w69)
+    s = round(s, 0x113F9804BEF90DAE, w70)
+    s = round(s, 0x1B710B35131C471B, w71)
+    s = round(s, 0x28DB77F523047D84, w72)
+    s = round(s, 0x32CAAB7B40C72493, w73)
+    s = round(s, 0x3C9EBE0A15C9BEBC, w74)
+    s = round(s, 0x431D67C49C100D4C, w75)
+    s = round(s, 0x4CC5D4BECB3E42B6, w76)
+    s = round(s, 0x597F299CFC657E2A, w77)
+    s = round(s, 0x5FCB6FAB3AD6FAEC, w78)
+    s = round(s, 0x6C44198C4A475817, w79)
+
+    Sha512 {
+        h0: word.wadd64(st.h0, s.a),
+        h1: word.wadd64(st.h1, s.b),
+        h2: word.wadd64(st.h2, s.c),
+        h3: word.wadd64(st.h3, s.d),
+        h4: word.wadd64(st.h4, s.e),
+        h5: word.wadd64(st.h5, s.f),
+        h6: word.wadd64(st.h6, s.g),
+        h7: word.wadd64(st.h7, s.h),
+        len: st.len
+    }
+
+// A state with nothing absorbed.
+//
+// The eight initial words are the first 64 bits of the fractional
+// parts of the square roots of the first eight primes
+// (FIPS 180-4 §5.3.5).
+//
+// ```novo
+// use word
+// use sha512_core
+//
+// fn main() [io]
+//     let st: Sha512 = sha512_core.new()
+//     let one: Sha512 = sha512_core.compress(st, Block { w: [0, 0, 0, 0,
+//         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] })
+//     println("one block absorbed")
+// ```
+pub fn new() -> Sha512
+    Sha512 {
+        h0: 0x6A09E667F3BCC908,
+        h1: -4942790177534073029,
+        h2: 0x3C6EF372FE94F82B,
+        h3: -6534734903238641935,
+        h4: 0x510E527FADE682D1,
+        h5: -7276294671716946913,
+        h6: 0x1F83D9ABFB41BD6B,
+        h7: 0x5BE0CD19137E2179,
+        len: 0
+    }

@@ -1,0 +1,320 @@
+// tests/hmac_vectors_tests.nv — RFC 4231 and RFC 2202 in full, plus
+// the key-length boundary neither of them lands exactly on.
+//
+// Run from the package directory:
+//
+//   novo test tests/hmac_vectors_tests.nv
+//
+// Every case here carries the RFC's own key and data.  Where the RFC
+// publishes the expected tag it was checked against OpenSSL before
+// being written down, which is what says the INPUTS were transcribed
+// correctly; the remaining tags come from the same oracle.
+
+
+use std.test
+use std.bytes
+
+// A test input built from hex, so nothing here depends on how a `Str`
+// literal escapes a byte.  `from_hex` cannot fail on a literal this
+// file generated, and the fallback keeps the type `Bytes` rather than
+// `?Bytes`.
+fn hexb(h: Str) -> Bytes
+    bytes.from_hex(h) ?? bytes.zeros(0)
+
+// `n` bytes of the byte `v` — the shape RFC 2202 and RFC 4231 write
+// their keys and data in.
+fn rep(n: Int, v: Int) -> Bytes
+    var b = bytes.zeros(n)
+    for i in 0..n
+        b = bytes.set_u8(b, i, v)
+    b
+
+use hashing
+use digest
+
+// RFC 4231 and RFC 2202 in full for sha256: a short key, a key
+// shorter than the block, a key longer than the block (which the
+// construction must hash first), and data on both sides of one
+// block.
+@test
+fn test_hmac_sha256_rfc_vectors()
+    // RFC 4231 case 1 / RFC 2202 case 1 — a 20-byte key (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"), hexb("4869205468657265"),
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
+    // RFC 4231 case 2 / RFC 2202 case 2 — a key shorter than the block (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("4a656665"), hexb("7768617420646f2079612077616e7420666f72206e6f7468696e673f"),
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")
+    // RFC 4231 case 3 / RFC 2202 case 3 — 50 bytes of data (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe")
+    // RFC 4231 case 4 / RFC 2202 case 4 — a 25-byte counting key (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("0102030405060708090a0b0c0d0e0f10111213141516171819"), hexb("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"),
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b")
+    // RFC 4231 case 5 / RFC 2202 case 5 — the truncation case, untruncated here
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"), hexb("546573742057697468205472756e636174696f6e"),
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "a3b6167473100ee06e0c796c2955552bfa6f7c0a6a8aef8b93f860aab0cd20c5")
+    // RFC 4231 case 6 — a key LONGER than the block, so the key is hashed first (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b6579202d2048617368204b6579204669727374"),
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54")
+    // RFC 4231 case 7 — a long key AND data longer than one block (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("5468697320697320612074657374207573696e672061206c6172676572207468616e20626c6f636b2d73697a65206b657920616e642061206c6172676572207468616e20626c6f636b2d73697a6520646174612e20546865206b6579206e6565647320746f20626520686173686564206265666f7265206265696e6720757365642062792074686520484d414320616c676f726974686d2e"),
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2")
+    // RFC 2202 case 6 — an 80-byte key for the 64-byte-block hashes
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b6579202d2048617368204b6579204669727374"),
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "6953025ed96f0c09f80a96f78e6538dbe2e7b820e3dd970e7ddd39091b32352f")
+    // RFC 2202 case 7 — an 80-byte key and data longer than one block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b657920616e64204c6172676572205468616e204f6e6520426c6f636b2d53697a652044617461"),
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "6355ac22e890d0a3c8481a5ca4825bc884d3e7a1ff98a2fc2ac7d8e064c3b2e6")
+    // RFC 2202 case 1 — MD5's 16-byte key
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"), hexb("4869205468657265"),
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "492ce020fe2534a5789dc3848806c78f4f6711397f08e7e7a12ca5a4483c8aa6")
+    // RFC 2202 case 3 — MD5, a 16-byte key and 50 bytes of data
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "7dda3cc169743a6484649f94f0eda0f9f2ff496a9733fb796ed5adb40a44c3c1")
+    // RFC 2202 case 5 — MD5's truncation case, untruncated here
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"), hexb("546573742057697468205472756e636174696f6e"),
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "2282475faa2def6936685d9c06566f2d782307ace7a27ada2037e6285efcb008")
+
+// RFC 4231 and RFC 2202 in full for sha512: a short key, a key
+// shorter than the block, a key longer than the block (which the
+// construction must hash first), and data on both sides of one
+// block.
+@test
+fn test_hmac_sha512_rfc_vectors()
+    // RFC 4231 case 1 / RFC 2202 case 1 — a 20-byte key
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"), hexb("4869205468657265"),
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cdedaa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854")
+    // RFC 4231 case 2 / RFC 2202 case 2 — a key shorter than the block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("4a656665"), hexb("7768617420646f2079612077616e7420666f72206e6f7468696e673f"),
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737")
+    // RFC 4231 case 3 / RFC 2202 case 3 — 50 bytes of data
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "fa73b0089d56a284efb0f0756c890be9b1b5dbdd8ee81a3655f83e33b2279d39bf3e848279a722c806b485a47e67c807b946a337bee8942674278859e13292fb")
+    // RFC 4231 case 4 / RFC 2202 case 4 — a 25-byte counting key
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("0102030405060708090a0b0c0d0e0f10111213141516171819"), hexb("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"),
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "b0ba465637458c6990e5a8c5f61d4af7e576d97ff94b872de76f8050361ee3dba91ca5c11aa25eb4d679275cc5788063a5f19741120c4f2de2adebeb10a298dd")
+    // RFC 4231 case 5 / RFC 2202 case 5 — the truncation case, untruncated here
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"), hexb("546573742057697468205472756e636174696f6e"),
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "415fad6271580a531d4179bc891d87a650188707922a4fbb36663a1eb16da008711c5b50ddd0fc235084eb9d3364a1454fb2ef67cd1d29fe6773068ea266e96b")
+    // RFC 4231 case 6 — a key LONGER than the block, so the key is hashed first
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b6579202d2048617368204b6579204669727374"),
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "80b24263c7c1a3ebb71493c1dd7be8b49b46d1f41b4aeec1121b013783f8f3526b56d037e05f2598bd0fd2215d6a1e5295e64f73f63f0aec8b915a985d786598")
+    // RFC 4231 case 7 — a long key AND data longer than one block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("5468697320697320612074657374207573696e672061206c6172676572207468616e20626c6f636b2d73697a65206b657920616e642061206c6172676572207468616e20626c6f636b2d73697a6520646174612e20546865206b6579206e6565647320746f20626520686173686564206265666f7265206265696e6720757365642062792074686520484d414320616c676f726974686d2e"),
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "e37b6a775dc87dbaa4dfa9f96e5e3ffddebd71f8867289865df5a32d20cdc944b6022cac3c4982b10d5eeb55c3e4de15134676fb6de0446065c97440fa8c6a58")
+    // RFC 2202 case 6 — an 80-byte key for the 64-byte-block hashes
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b6579202d2048617368204b6579204669727374"),
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "132c9ebc32531071f6c4d9e8842291e9403e5940f813170a3ba3a0dd6c055c8b8ca587b24c56c47f3c1f2fb8ee8f9fbc8d92deed0f83426be3e8a2e9056778b3")
+    // RFC 2202 case 7 — an 80-byte key and data longer than one block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b657920616e64204c6172676572205468616e204f6e6520426c6f636b2d53697a652044617461"),
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "09441cda584ed2f4d2f5b519c71baf3c79cce19dfc89a548e73b3bb382a9124d6e792b77bf57903ff5858e5d111d15f45d6fd118eea023f28d2eb234ebe62f85")
+    // RFC 2202 case 1 — MD5's 16-byte key
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"), hexb("4869205468657265"),
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "7641c48a3b4aa8f887c07b3e83f96affb89c978fed8c96fcbbf4ad596eebfe496f9f16da6cd080ba393c6f365ad72b50d15c71bfb1d6b81f66a911786c6ce932")
+    // RFC 2202 case 3 — MD5, a 16-byte key and 50 bytes of data
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "ad9b5c7de72693737cd5e9d9f41170d18841fec1201c1c1b02e05cae116718009f771cad9946ddbf7e3cde3e818d9ae85d91b2badae94172d096a44a79c91e86")
+    // RFC 2202 case 5 — MD5's truncation case, untruncated here
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"), hexb("546573742057697468205472756e636174696f6e"),
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "da2c03a1f8d34ce536b246c9dc47281d7052d3f82a7b4f6dfe9ee9f5accdae02dd72f9b89324f25f9b8276a2e3d31c0a87b8b6c1dcefd7602cc881a7d120e3fd")
+
+// RFC 4231 and RFC 2202 in full for sha1: a short key, a key
+// shorter than the block, a key longer than the block (which the
+// construction must hash first), and data on both sides of one
+// block.
+@test
+fn test_hmac_sha1_rfc_vectors()
+    // RFC 4231 case 1 / RFC 2202 case 1 — a 20-byte key (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"), hexb("4869205468657265"),
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "b617318655057264e28bc0b6fb378c8ef146be00")
+    // RFC 4231 case 2 / RFC 2202 case 2 — a key shorter than the block (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("4a656665"), hexb("7768617420646f2079612077616e7420666f72206e6f7468696e673f"),
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79")
+    // RFC 4231 case 3 / RFC 2202 case 3 — 50 bytes of data (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "125d7342b9ac11cd91a39af48aa17b4f63f175d3")
+    // RFC 4231 case 4 / RFC 2202 case 4 — a 25-byte counting key (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("0102030405060708090a0b0c0d0e0f10111213141516171819"), hexb("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"),
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "4c9007f4026250c6bc8414f9bf50c86c2d7235da")
+    // RFC 4231 case 5 / RFC 2202 case 5 — the truncation case, untruncated here (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"), hexb("546573742057697468205472756e636174696f6e"),
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "4c1a03424b55e07fe7f27be1d58bb9324a9a5a04")
+    // RFC 4231 case 6 — a key LONGER than the block, so the key is hashed first
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b6579202d2048617368204b6579204669727374"),
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "90d0dace1c1bdc957339307803160335bde6df2b")
+    // RFC 4231 case 7 — a long key AND data longer than one block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("5468697320697320612074657374207573696e672061206c6172676572207468616e20626c6f636b2d73697a65206b657920616e642061206c6172676572207468616e20626c6f636b2d73697a6520646174612e20546865206b6579206e6565647320746f20626520686173686564206265666f7265206265696e6720757365642062792074686520484d414320616c676f726974686d2e"),
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "217e44bb08b6e06a2d6c30f3cb9f537f97c63356")
+    // RFC 2202 case 6 — an 80-byte key for the 64-byte-block hashes (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b6579202d2048617368204b6579204669727374"),
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "aa4ae5e15272d00e95705637ce8a3b55ed402112")
+    // RFC 2202 case 7 — an 80-byte key and data longer than one block (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b657920616e64204c6172676572205468616e204f6e6520426c6f636b2d53697a652044617461"),
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "e8e99d0f45237d786d6bbaa7965c7808bbff1a91")
+    // RFC 2202 case 1 — MD5's 16-byte key
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"), hexb("4869205468657265"),
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "675b0b3a1b4ddf4e124872da6c2f632bfed957e9")
+    // RFC 2202 case 3 — MD5, a 16-byte key and 50 bytes of data
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "d730594d167e35d5956fd8003d0db3d3f46dc7bb")
+    // RFC 2202 case 5 — MD5's truncation case, untruncated here
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"), hexb("546573742057697468205472756e636174696f6e"),
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "37268b7e21e84da5720c53c4ba03ad1104039fa7")
+
+// RFC 4231 and RFC 2202 in full for md5: a short key, a key
+// shorter than the block, a key longer than the block (which the
+// construction must hash first), and data on both sides of one
+// block.
+@test
+fn test_hmac_md5_rfc_vectors()
+    // RFC 4231 case 1 / RFC 2202 case 1 — a 20-byte key
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"), hexb("4869205468657265"),
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "5ccec34ea9656392457fa1ac27f08fbc")
+    // RFC 4231 case 2 / RFC 2202 case 2 — a key shorter than the block (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("4a656665"), hexb("7768617420646f2079612077616e7420666f72206e6f7468696e673f"),
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "750c783e6ab0b503eaa86e310a5db738")
+    // RFC 4231 case 3 / RFC 2202 case 3 — 50 bytes of data
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "2ab8b9a9f7d3894d15ad8383b97044b2")
+    // RFC 4231 case 4 / RFC 2202 case 4 — a 25-byte counting key (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("0102030405060708090a0b0c0d0e0f10111213141516171819"), hexb("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"),
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "697eaf0aca3a3aea3a75164746ffaa79")
+    // RFC 4231 case 5 / RFC 2202 case 5 — the truncation case, untruncated here
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"), hexb("546573742057697468205472756e636174696f6e"),
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "951726cea438b8e106e43b3d87a19c8e")
+    // RFC 4231 case 6 — a key LONGER than the block, so the key is hashed first
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b6579202d2048617368204b6579204669727374"),
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "bfecaf4efff90a3a668f3922fec3762d")
+    // RFC 4231 case 7 — a long key AND data longer than one block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("5468697320697320612074657374207573696e672061206c6172676572207468616e20626c6f636b2d73697a65206b657920616e642061206c6172676572207468616e20626c6f636b2d73697a6520646174612e20546865206b6579206e6565647320746f20626520686173686564206265666f7265206265696e6720757365642062792074686520484d414320616c676f726974686d2e"),
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "09b8ae7b15adbbb243aca3491b51512b")
+    // RFC 2202 case 6 — an 80-byte key for the 64-byte-block hashes (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b6579202d2048617368204b6579204669727374"),
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "6b1ab7fe4bd7bf8f0b62e6ce61b9d0cd")
+    // RFC 2202 case 7 — an 80-byte key and data longer than one block (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("54657374205573696e67204c6172676572205468616e20426c6f636b2d53697a65204b657920616e64204c6172676572205468616e204f6e6520426c6f636b2d53697a652044617461"),
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "6f630fad67cda0ee1fb1f562db3aa53e")
+    // RFC 2202 case 1 — MD5's 16-byte key (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"), hexb("4869205468657265"),
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "9294727a3638bb1c13f48ef8158bfc9d")
+    // RFC 2202 case 3 — MD5, a 16-byte key and 50 bytes of data (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), hexb("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "56be34521d144c88dbb8c733f0e8b3f6")
+    // RFC 2202 case 5 — MD5's truncation case, untruncated here (published)
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"), hexb("546573742057697468205472756e636174696f6e"),
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "56461ef2342edc00f9bab995690efd4c")
+
+// The branch RFC 2104 §2 puts on the key length: a key of exactly
+// one block is used as it stands, and one byte more is replaced by
+// its own digest.  Getting that boundary wrong is invisible until
+// somebody uses a key of exactly 64 bytes.
+@test
+fn test_hmac_key_length_boundary()
+    // sha256, a 63-byte key against a 64-byte block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e"), "boundary",
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "5b3b28939f062233edd3b78c7984acc50bdb173013a53a3175a1b667dd4cdae0")
+    // sha256, a 64-byte key against a 64-byte block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"), "boundary",
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "04660fc313657aa3500078e1f2788cc4e328654092b137f946516e4d7a17adae")
+    // sha256, a 65-byte key against a 64-byte block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"), "boundary",
+                                            bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
+                       "ea8a9678017bce7c50df43ced20cc4b112ed884969720bb2ec14e24ce582f037")
+    // sha512, a 127-byte key against a 128-byte block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e"), "boundary",
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "2e8adbf53ecfd6ef08cbd4def91bcad5de092d9399c828c3a95f9b47f88c79cb84a73743a067c7efea33d08a4d2206469719eb42dfaf022d9bed4f5102ef2142")
+    // sha512, a 128-byte key against a 128-byte block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f"), "boundary",
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "8d0602513370bc0e39e1f240561d6008133dca85a61ea37dc77038b9717f4c40256b6d36faea0a7dbaec2a003283314a23104bbd16ce90f27bf8e00874025e81")
+    // sha512, a 129-byte key against a 128-byte block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80"), "boundary",
+                                            bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
+                       "003d6eea77321771113ce0d069fa33932df4481817e12c570a2a58db52ee70a007db59c100b5b48b2462834191320396551a232fe13b1ed7938d5aead1b5ee2f")
+    // sha1, a 63-byte key against a 64-byte block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e"), "boundary",
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "cf951930abe7b08be6b1dc525a02735d4be210d6")
+    // sha1, a 64-byte key against a 64-byte block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"), "boundary",
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "f367a5da016833fe0c0883bbb5fd86e15393b9d9")
+    // sha1, a 65-byte key against a 64-byte block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"), "boundary",
+                                            bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
+                       "257c964f6bcd5e331ac048e3695dc64cb38a71ac")
+    // md5, a 63-byte key against a 64-byte block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e"), "boundary",
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "8291ae7287bbd3d63de5995c1765f2dd")
+    // md5, a 64-byte key against a 64-byte block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"), "boundary",
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "dd3b606e649e94548e747abdef13bd25")
+    // md5, a 65-byte key against a 64-byte block
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"), "boundary",
+                                            bytes.zeros(hashing.MD5_DIGEST_BYTES))),
+                       "364037b6db60f0b64703057c88793d0a")
+
+// A tag compares equal to itself and to nothing else, through the
+// comparison callers are told to use.
+@test
+fn test_hmac_tag_compares_constant_time()
+    let tag = hashing.hmac_sha256("k", "m", bytes.zeros(hashing.SHA256_DIGEST_BYTES))
+    let same = hashing.hmac_sha256("k", "m", bytes.zeros(hashing.SHA256_DIGEST_BYTES))
+    let other = hashing.hmac_sha256("k", "m!", bytes.zeros(hashing.SHA256_DIGEST_BYTES))
+    test.assert_true(digest.ct_eq(tag, same), "equal tags compare equal")
+    test.assert_false(digest.ct_eq(tag, other), "different tags do not")
+    test.assert_false(digest.ct_eq(tag, bytes.slice(tag, 0, 16)),
+                      "a truncated tag is not the tag")
