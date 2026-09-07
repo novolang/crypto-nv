@@ -51,17 +51,13 @@ fn main() [hw]
     let a0: Sha256 = sha256_core.new()
     let a1: Sha256 = sha256_core.compress(a0, abc_block())
     let a2: Sha256 = sha256_core.compress(a1, abc_block())
-
     let b0: Sha512 = sha512_core.new()
     let b1: Sha512 = sha512_core.compress(b0, abc_block())
     let b2: Sha512 = sha512_core.compress(b1, abc_block())
-
     let c0: Sha1 = sha1_core.new()
     let c1: Sha1 = sha1_core.compress(c0, abc_block())
     let c2: Sha1 = sha1_core.compress(c1, abc_block())
-
     let d0: Md5 = md5_core.new()
     let d1: Md5 = md5_core.compress(d0, abc_block())
     let d2: Md5 = md5_core.compress(d1, abc_block())
-
     hal.uart.write("crypto-nv: four cores, two blocks each\n")

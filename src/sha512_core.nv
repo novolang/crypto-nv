@@ -23,7 +23,6 @@ use word
 // on its own, with `hashing` and its `Bytes` left behind on the
 // host.
 
-
 // The SHA-512 state: eight 64-bit chaining words (FIPS 180-4 §5.3.5)
 // and the number of bytes absorbed.  A `@value` struct for the same
 // reason `sha256.Sha256` is one — inline storage, no cell, no
@@ -87,11 +86,11 @@ fn small_sigma1(x: Int) -> Int
 @tier(embedded)
 fn round(s: Working512, k: Int, w: Int) -> Working512
     let t1 = word.wadd64(word.wadd64(word.wadd64(s.h, big_sigma1(s.e)),
-                                     word.wadd64(ch(s.e, s.f, s.g), k)), w)
+                                     word.wadd64(ch(s.e, s.f, s.g), k)),
+                                     w)
     let t2 = word.wadd64(big_sigma0(s.a), maj(s.a, s.b, s.c))
     Working512 { a: word.wadd64(t1, t2), b: s.a, c: s.b, d: s.c,
            e: word.wadd64(s.d, t1), f: s.e, g: s.f, h: s.g }
-
 
 // Absorb one 1024-bit block.
 //
@@ -124,7 +123,6 @@ fn compress(st: Sha512, b: Block) -> Sha512
     let w13 = b.w[13]
     let w14 = b.w[14]
     let w15 = b.w[15]
-
     // W[t] = σ1(W[t-2]) + W[t-7] + σ0(W[t-15]) + W[t-16]  (§6.4.2 step 1).
     let w16 = word.wadd64(word.wadd64(small_sigma1(w14), w9), word.wadd64(small_sigma0(w1), w0))
     let w17 = word.wadd64(word.wadd64(small_sigma1(w15), w10), word.wadd64(small_sigma0(w2), w1))
@@ -190,10 +188,8 @@ fn compress(st: Sha512, b: Block) -> Sha512
     let w77 = word.wadd64(word.wadd64(small_sigma1(w75), w70), word.wadd64(small_sigma0(w62), w61))
     let w78 = word.wadd64(word.wadd64(small_sigma1(w76), w71), word.wadd64(small_sigma0(w63), w62))
     let w79 = word.wadd64(word.wadd64(small_sigma1(w77), w72), word.wadd64(small_sigma0(w64), w63))
-
     var s = Working512 { a: st.h0, b: st.h1, c: st.h2, d: st.h3,
                    e: st.h4, f: st.h5, g: st.h6, h: st.h7 }
-
     // The eighty rounds, each with its constant from §4.2.3.
     s = round(s, 0x428A2F98D728AE22, w0)
     s = round(s, 0x7137449123EF65CD, w1)
@@ -275,7 +271,6 @@ fn compress(st: Sha512, b: Block) -> Sha512
     s = round(s, 0x597F299CFC657E2A, w77)
     s = round(s, 0x5FCB6FAB3AD6FAEC, w78)
     s = round(s, 0x6C44198C4A475817, w79)
-
     Sha512 {
         h0: word.wadd64(st.h0, s.a),
         h1: word.wadd64(st.h1, s.b),
@@ -285,8 +280,7 @@ fn compress(st: Sha512, b: Block) -> Sha512
         h5: word.wadd64(st.h5, s.f),
         h6: word.wadd64(st.h6, s.g),
         h7: word.wadd64(st.h7, s.h),
-        len: st.len
-    }
+        len: st.len }
 
 // A state with nothing absorbed.
 //
@@ -314,5 +308,4 @@ pub fn new() -> Sha512
         h5: -7276294671716946913,
         h6: 0x1F83D9ABFB41BD6B,
         h7: 0x5BE0CD19137E2179,
-        len: 0
-    }
+        len: 0 }

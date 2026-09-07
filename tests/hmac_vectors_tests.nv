@@ -10,7 +10,6 @@
 // being written down, which is what says the INPUTS were transcribed
 // correctly; the remaining tags come from the same oracle.
 
-
 use std.test
 use std.bytes
 
@@ -25,7 +24,7 @@ fn hexb(h: Str) -> Bytes
 // their keys and data in.
 fn rep(n: Int, v: Int) -> Bytes
     var b = bytes.zeros(n)
-    for i in 0..n
+    for i in 0 .. n
         b = bytes.set_u8(b, i, v)
     b
 

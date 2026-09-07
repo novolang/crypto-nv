@@ -68,7 +68,7 @@ pub fn sha256_new() -> Sha256
 pub fn sha256_update(st: Sha256, data: Bytes) -> Sha256
     let blocks = bytes.len(data) / SHA256_BLOCK_BYTES
     var s = st
-    for i in 0..blocks
+    for i in 0 .. blocks
         s = sha256_core.compress(s, digest.block_be32(data, i * SHA256_BLOCK_BYTES))
     Sha256 { h0: s.h0, h1: s.h1, h2: s.h2, h3: s.h3,
              h4: s.h4, h5: s.h5, h6: s.h6, h7: s.h7,
@@ -93,15 +93,15 @@ pub fn sha256_update(st: Sha256, data: Bytes) -> Sha256
 // ```
 pub fn sha256_finish(st: Sha256, tail: Bytes, out: Bytes) -> Bytes
     let n = bytes.len(tail)
-    let whole = (n / SHA256_BLOCK_BYTES) * SHA256_BLOCK_BYTES
+    let whole = n / SHA256_BLOCK_BYTES * SHA256_BLOCK_BYTES
     let rem = n - whole
     let bit_len = (st.len + n) * 8
     var s = st
-    for i in 0..(whole / SHA256_BLOCK_BYTES)
+    for i in 0 .. whole / SHA256_BLOCK_BYTES
         s = sha256_core.compress(s, digest.block_be32(tail, i * SHA256_BLOCK_BYTES))
     let nb = digest.pad_blocks(rem, SHA256_BLOCK_BYTES, 8)
     let plen = nb * SHA256_BLOCK_BYTES
-    for b in 0..nb
+    for b in 0 .. nb
         s = sha256_core.compress(s, digest.pad_block_be32(tail, whole, rem, plen, bit_len, b))
     var o = out
     o = bytes.set_u32_be(o, 0, s.h0)
@@ -160,7 +160,9 @@ pub fn hmac_sha256(key: Bytes, msg: Bytes, out: Bytes) -> Bytes
         key
     let inner = sha256_finish(sha256_update(sha256_core.new(), digest.hmac_pad_block(k, SHA256_BLOCK_BYTES, 0x36)),
                        msg, bytes.zeros(SHA256_DIGEST_BYTES))
-    sha256_finish(sha256_update(sha256_core.new(), digest.hmac_pad_block(k, SHA256_BLOCK_BYTES, 0x5C)), inner, out)
+    sha256_finish(sha256_update(sha256_core.new(), digest.hmac_pad_block(k, SHA256_BLOCK_BYTES, 0x5C)),
+        inner,
+        out)
 
 // ── SHA-512 ────────────────────────────────────────────────────
 
@@ -185,7 +187,7 @@ pub fn sha512_new() -> Sha512
 pub fn sha512_update(st: Sha512, data: Bytes) -> Sha512
     let blocks = bytes.len(data) / SHA512_BLOCK_BYTES
     var s = st
-    for i in 0..blocks
+    for i in 0 .. blocks
         s = sha512_core.compress(s, digest.block_be64(data, i * SHA512_BLOCK_BYTES))
     Sha512 { h0: s.h0, h1: s.h1, h2: s.h2, h3: s.h3,
              h4: s.h4, h5: s.h5, h6: s.h6, h7: s.h7,
@@ -203,15 +205,15 @@ pub fn sha512_update(st: Sha512, data: Bytes) -> Sha512
 // ```
 pub fn sha512_finish(st: Sha512, tail: Bytes, out: Bytes) -> Bytes
     let n = bytes.len(tail)
-    let whole = (n / SHA512_BLOCK_BYTES) * SHA512_BLOCK_BYTES
+    let whole = n / SHA512_BLOCK_BYTES * SHA512_BLOCK_BYTES
     let rem = n - whole
     let bit_len = (st.len + n) * 8
     var s = st
-    for i in 0..(whole / SHA512_BLOCK_BYTES)
+    for i in 0 .. whole / SHA512_BLOCK_BYTES
         s = sha512_core.compress(s, digest.block_be64(tail, i * SHA512_BLOCK_BYTES))
     let nb = digest.pad_blocks(rem, SHA512_BLOCK_BYTES, 16)
     let plen = nb * SHA512_BLOCK_BYTES
-    for b in 0..nb
+    for b in 0 .. nb
         s = sha512_core.compress(s, digest.pad_block_be64(tail, whole, rem, plen, bit_len, b))
     var o = out
     o = bytes.set_u64_be(o, 0, s.h0)
@@ -266,7 +268,9 @@ pub fn hmac_sha512(key: Bytes, msg: Bytes, out: Bytes) -> Bytes
         key
     let inner = sha512_finish(sha512_update(sha512_core.new(), digest.hmac_pad_block(k, SHA512_BLOCK_BYTES, 0x36)),
                        msg, bytes.zeros(SHA512_DIGEST_BYTES))
-    sha512_finish(sha512_update(sha512_core.new(), digest.hmac_pad_block(k, SHA512_BLOCK_BYTES, 0x5C)), inner, out)
+    sha512_finish(sha512_update(sha512_core.new(), digest.hmac_pad_block(k, SHA512_BLOCK_BYTES, 0x5C)),
+        inner,
+        out)
 
 // ── SHA-1 ──────────────────────────────────────────────────────
 
@@ -287,7 +291,7 @@ pub fn sha1_new() -> Sha1
 pub fn sha1_update(st: Sha1, data: Bytes) -> Sha1
     let blocks = bytes.len(data) / SHA1_BLOCK_BYTES
     var s = st
-    for i in 0..blocks
+    for i in 0 .. blocks
         s = sha1_core.compress(s, digest.block_be32(data, i * SHA1_BLOCK_BYTES))
     Sha1 { h0: s.h0, h1: s.h1, h2: s.h2, h3: s.h3, h4: s.h4,
            len: s.len + blocks * SHA1_BLOCK_BYTES }
@@ -304,15 +308,15 @@ pub fn sha1_update(st: Sha1, data: Bytes) -> Sha1
 // ```
 pub fn sha1_finish(st: Sha1, tail: Bytes, out: Bytes) -> Bytes
     let n = bytes.len(tail)
-    let whole = (n / SHA1_BLOCK_BYTES) * SHA1_BLOCK_BYTES
+    let whole = n / SHA1_BLOCK_BYTES * SHA1_BLOCK_BYTES
     let rem = n - whole
     let bit_len = (st.len + n) * 8
     var s = st
-    for i in 0..(whole / SHA1_BLOCK_BYTES)
+    for i in 0 .. whole / SHA1_BLOCK_BYTES
         s = sha1_core.compress(s, digest.block_be32(tail, i * SHA1_BLOCK_BYTES))
     let nb = digest.pad_blocks(rem, SHA1_BLOCK_BYTES, 8)
     let plen = nb * SHA1_BLOCK_BYTES
-    for b in 0..nb
+    for b in 0 .. nb
         s = sha1_core.compress(s, digest.pad_block_be32(tail, whole, rem, plen, bit_len, b))
     var o = out
     o = bytes.set_u32_be(o, 0, s.h0)
@@ -384,7 +388,7 @@ pub fn md5_new() -> Md5
 pub fn md5_update(st: Md5, data: Bytes) -> Md5
     let blocks = bytes.len(data) / MD5_BLOCK_BYTES
     var s = st
-    for i in 0..blocks
+    for i in 0 .. blocks
         s = md5_core.compress(s, digest.block_le32(data, i * MD5_BLOCK_BYTES))
     Md5 { a: s.a, b: s.b, c: s.c, d: s.d, len: s.len + blocks * MD5_BLOCK_BYTES }
 
@@ -400,15 +404,15 @@ pub fn md5_update(st: Md5, data: Bytes) -> Md5
 // ```
 pub fn md5_finish(st: Md5, tail: Bytes, out: Bytes) -> Bytes
     let n = bytes.len(tail)
-    let whole = (n / MD5_BLOCK_BYTES) * MD5_BLOCK_BYTES
+    let whole = n / MD5_BLOCK_BYTES * MD5_BLOCK_BYTES
     let rem = n - whole
     let bit_len = (st.len + n) * 8
     var s = st
-    for i in 0..(whole / MD5_BLOCK_BYTES)
+    for i in 0 .. whole / MD5_BLOCK_BYTES
         s = md5_core.compress(s, digest.block_le32(tail, i * MD5_BLOCK_BYTES))
     let nb = digest.pad_blocks(rem, MD5_BLOCK_BYTES, 8)
     let plen = nb * MD5_BLOCK_BYTES
-    for b in 0..nb
+    for b in 0 .. nb
         s = md5_core.compress(s, digest.pad_block_le32(tail, whole, rem, plen, bit_len, b))
     var o = out
     o = bytes.set_u32_le(o, 0, s.a)

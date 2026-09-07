@@ -8,7 +8,7 @@ category    = "crypto"
 tags        = ["sha256", "sha512", "sha1", "md5", "hmac", "fips-180-4", "rfc-2104", "hash", "digest"]
 repository  = "https://github.com/novolang/crypto-nv"
 maintainers = ["novo-lang"]
-novo        = ">= 0.8.4"
+novo        = ">= 0.8.5"
 
 # No `main`: this is a library.  `novo pkg build` type- and
 # effect-checks every module under src/ and writes no binary.

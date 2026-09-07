@@ -30,7 +30,6 @@ use word
 // on its own, with `hashing` and its `Bytes` left behind on the
 // host.
 
-
 // The SHA-256 state: the eight chaining words of FIPS 180-4 §5.3.3 and
 // the number of bytes absorbed so far.
 //
@@ -103,7 +102,6 @@ fn round(s: Working256, k: Int, w: Int) -> Working256
     Working256 { a: word.mask32(t1 + t2), b: s.a, c: s.b, d: s.c,
            e: word.mask32(s.d + t1), f: s.e, g: s.f, h: s.g }
 
-
 // Absorb one 512-bit block into the state.
 //
 // The whole of SHA-256 is here: the schedule, the sixty-four rounds,
@@ -138,7 +136,6 @@ fn compress(st: Sha256, b: Block) -> Sha256
     let w13 = b.w[13]
     let w14 = b.w[14]
     let w15 = b.w[15]
-
     // W[t] = σ1(W[t-2]) + W[t-7] + σ0(W[t-15]) + W[t-16]  (§6.2.2 step 1).
     let w16 = word.mask32(small_sigma1(w14) + w9 + small_sigma0(w1) + w0)
     let w17 = word.mask32(small_sigma1(w15) + w10 + small_sigma0(w2) + w1)
@@ -188,10 +185,8 @@ fn compress(st: Sha256, b: Block) -> Sha256
     let w61 = word.mask32(small_sigma1(w59) + w54 + small_sigma0(w46) + w45)
     let w62 = word.mask32(small_sigma1(w60) + w55 + small_sigma0(w47) + w46)
     let w63 = word.mask32(small_sigma1(w61) + w56 + small_sigma0(w48) + w47)
-
     var s = Working256 { a: st.h0, b: st.h1, c: st.h2, d: st.h3,
                    e: st.h4, f: st.h5, g: st.h6, h: st.h7 }
-
     // The sixty-four rounds, each with its constant from §4.2.2.
     s = round(s, 0x428A2F98, w0)
     s = round(s, 0x71374491, w1)
@@ -257,7 +252,6 @@ fn compress(st: Sha256, b: Block) -> Sha256
     s = round(s, 0xA4506CEB, w61)
     s = round(s, 0xBEF9A3F7, w62)
     s = round(s, 0xC67178F2, w63)
-
     Sha256 {
         h0: word.mask32(st.h0 + s.a),
         h1: word.mask32(st.h1 + s.b),
@@ -267,8 +261,7 @@ fn compress(st: Sha256, b: Block) -> Sha256
         h5: word.mask32(st.h5 + s.f),
         h6: word.mask32(st.h6 + s.g),
         h7: word.mask32(st.h7 + s.h),
-        len: st.len
-    }
+        len: st.len }
 
 // A state with nothing absorbed.
 //
@@ -296,5 +289,4 @@ pub fn new() -> Sha256
         h5: 0x9B05688C,
         h6: 0x1F83D9AB,
         h7: 0x5BE0CD19,
-        len: 0
-    }
+        len: 0 }

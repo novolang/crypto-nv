@@ -55,8 +55,7 @@ pub fn block_be32(data: Bytes, off: Int) -> Block
         bytes.u32_be_at(data, off + 48) ?? 0,
         bytes.u32_be_at(data, off + 52) ?? 0,
         bytes.u32_be_at(data, off + 56) ?? 0,
-        bytes.u32_be_at(data, off + 60) ?? 0
-    ] }
+        bytes.u32_be_at(data, off + 60) ?? 0] }
 
 // The sixteen little-endian 32-bit words of the block at `off`.
 //
@@ -79,8 +78,7 @@ pub fn block_le32(data: Bytes, off: Int) -> Block
         bytes.u32_le_at(data, off + 48) ?? 0,
         bytes.u32_le_at(data, off + 52) ?? 0,
         bytes.u32_le_at(data, off + 56) ?? 0,
-        bytes.u32_le_at(data, off + 60) ?? 0
-    ] }
+        bytes.u32_le_at(data, off + 60) ?? 0] }
 
 // The sixteen big-endian 64-bit words of the 1024-bit block at `off`.
 //
@@ -104,8 +102,7 @@ pub fn block_be64(data: Bytes, off: Int) -> Block
         bytes.u64_be_at(data, off + 96) ?? 0,
         bytes.u64_be_at(data, off + 104) ?? 0,
         bytes.u64_be_at(data, off + 112) ?? 0,
-        bytes.u64_be_at(data, off + 120) ?? 0
-    ] }
+        bytes.u64_be_at(data, off + 120) ?? 0] }
 
 // The byte at position `i` of the padded final block group.
 //
@@ -141,7 +138,7 @@ pub fn pad_byte_le(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, i:
 // One big-endian 32-bit word of the padded block group, at word `k`.
 pub fn pad_word_be32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, k: Int) -> Int
     var v = 0
-    for j in 0..4
+    for j in 0 .. 4
         v = bits.bor(bits.shl(v, 8),
                      pad_byte(tail, base, rem, plen, bit_len, k * 4 + j))
     v
@@ -149,7 +146,7 @@ pub fn pad_word_be32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, 
 // One little-endian 32-bit word of the padded block group, at word `k`.
 pub fn pad_word_le32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, k: Int) -> Int
     var v = 0
-    for j in 0..4
+    for j in 0 .. 4
         v = bits.bor(bits.shl(v, 8),
                      pad_byte_le(tail, base, rem, plen, bit_len, k * 4 + 3 - j))
     v
@@ -163,7 +160,7 @@ pub fn pad_word_le32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, 
 // `plen - 1` and its first at `plen - 8`.
 pub fn pad_word_be64(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, k: Int) -> Int
     var v = 0
-    for j in 0..8
+    for j in 0 .. 8
         let i = k * 8 + j
         let b = if i < plen - 16
             pad_byte(tail, base, rem, plen, 0, i)
@@ -193,8 +190,7 @@ pub fn pad_block_be32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int,
         pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 12),
         pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 13),
         pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 14),
-        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 15)
-    ] }
+        pad_word_be32(tail, base, rem, plen, bit_len, blk * 16 + 15)] }
 
 // The padded final block group as a little-endian 32-bit block —
 // MD5's reading of the same bytes.
@@ -215,8 +211,7 @@ pub fn pad_block_le32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int,
         pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 12),
         pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 13),
         pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 14),
-        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 15)
-    ] }
+        pad_word_le32(tail, base, rem, plen, bit_len, blk * 16 + 15)] }
 
 // The padded final block group as a big-endian 64-bit block.
 pub fn pad_block_be64(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, blk: Int) -> Block
@@ -236,8 +231,7 @@ pub fn pad_block_be64(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int,
         pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 12),
         pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 13),
         pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 14),
-        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 15)
-    ] }
+        pad_word_be64(tail, base, rem, plen, bit_len, blk * 16 + 15)] }
 
 // How many blocks the padding of a `rem`-byte remainder occupies, for
 // a block of `block` bytes and a length field of `lenf` bytes.
@@ -262,7 +256,7 @@ pub fn pad_blocks(rem: Int, block: Int, lenf: Int) -> Int
 // takes the block length rather than choosing one.
 pub fn hmac_pad_block(key: Bytes, block_bytes: Int, pad: Int) -> Bytes
     var b = bytes.zeros(block_bytes)
-    for i in 0..block_bytes
+    for i in 0 .. block_bytes
         b = bytes.set_u8(b, i, bits.xor(bytes.byte_at(key, i) ?? 0, pad))
     b
 
@@ -294,7 +288,7 @@ pub fn ct_eq(a: Bytes, b: Bytes) -> Bool
         false
     else
         var diff = 0
-        for i in 0..n
+        for i in 0 .. n
             diff = bits.bor(diff, bits.xor(bytes.byte_at(a, i) ?? 0,
                                            bytes.byte_at(b, i) ?? 0))
         diff == 0

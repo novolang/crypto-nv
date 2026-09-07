@@ -23,7 +23,6 @@ use word
 // on its own, with `hashing` and its `Bytes` left behind on the
 // host.
 
-
 // The SHA-1 state: five chaining words (FIPS 180-4 §5.3.1) and the
 // number of bytes absorbed.
 pub @value
@@ -66,7 +65,6 @@ fn round(s: Working1, f: Int, k: Int, w: Int) -> Working1
     let t = word.mask32(word.rotl32(s.a, 5) + f + s.e + k + w)
     Working1 { a: t, b: s.a, c: word.rotl32(s.b, 30), d: s.c, e: s.d }
 
-
 // Absorb one 512-bit block.
 //
 // The schedule and the rounds are written out for the reason
@@ -99,7 +97,6 @@ fn compress(st: Sha1, b: Block) -> Sha1
     let w13 = b.w[13]
     let w14 = b.w[14]
     let w15 = b.w[15]
-
     // W[t] = ROTL1(W[t-3] ^ W[t-8] ^ W[t-14] ^ W[t-16])  (§6.1.2 step 1).
     let w16 = word.rotl32(bits.xor(bits.xor(w13, w8), bits.xor(w2, w0)), 1)
     let w17 = word.rotl32(bits.xor(bits.xor(w14, w9), bits.xor(w3, w1)), 1)
@@ -165,9 +162,7 @@ fn compress(st: Sha1, b: Block) -> Sha1
     let w77 = word.rotl32(bits.xor(bits.xor(w74, w69), bits.xor(w63, w61)), 1)
     let w78 = word.rotl32(bits.xor(bits.xor(w75, w70), bits.xor(w64, w62)), 1)
     let w79 = word.rotl32(bits.xor(bits.xor(w76, w71), bits.xor(w65, w63)), 1)
-
     var s = Working1 { a: st.h0, b: st.h1, c: st.h2, d: st.h3, e: st.h4 }
-
     // Rounds 0-19: Ch, K = 0x5A827999.
     s = round(s, ch(s.b, s.c, s.d), 0x5A827999, w0)
     s = round(s, ch(s.b, s.c, s.d), 0x5A827999, w1)
@@ -189,7 +184,6 @@ fn compress(st: Sha1, b: Block) -> Sha1
     s = round(s, ch(s.b, s.c, s.d), 0x5A827999, w17)
     s = round(s, ch(s.b, s.c, s.d), 0x5A827999, w18)
     s = round(s, ch(s.b, s.c, s.d), 0x5A827999, w19)
-
     // Rounds 20-39: Parity, K = 0x6ED9EBA1.
     s = round(s, parity(s.b, s.c, s.d), 0x6ED9EBA1, w20)
     s = round(s, parity(s.b, s.c, s.d), 0x6ED9EBA1, w21)
@@ -211,7 +205,6 @@ fn compress(st: Sha1, b: Block) -> Sha1
     s = round(s, parity(s.b, s.c, s.d), 0x6ED9EBA1, w37)
     s = round(s, parity(s.b, s.c, s.d), 0x6ED9EBA1, w38)
     s = round(s, parity(s.b, s.c, s.d), 0x6ED9EBA1, w39)
-
     // Rounds 40-59: Maj, K = 0x8F1BBCDC.
     s = round(s, maj(s.b, s.c, s.d), 0x8F1BBCDC, w40)
     s = round(s, maj(s.b, s.c, s.d), 0x8F1BBCDC, w41)
@@ -233,7 +226,6 @@ fn compress(st: Sha1, b: Block) -> Sha1
     s = round(s, maj(s.b, s.c, s.d), 0x8F1BBCDC, w57)
     s = round(s, maj(s.b, s.c, s.d), 0x8F1BBCDC, w58)
     s = round(s, maj(s.b, s.c, s.d), 0x8F1BBCDC, w59)
-
     // Rounds 60-79: Parity, K = 0xCA62C1D6.
     s = round(s, parity(s.b, s.c, s.d), 0xCA62C1D6, w60)
     s = round(s, parity(s.b, s.c, s.d), 0xCA62C1D6, w61)
@@ -255,15 +247,13 @@ fn compress(st: Sha1, b: Block) -> Sha1
     s = round(s, parity(s.b, s.c, s.d), 0xCA62C1D6, w77)
     s = round(s, parity(s.b, s.c, s.d), 0xCA62C1D6, w78)
     s = round(s, parity(s.b, s.c, s.d), 0xCA62C1D6, w79)
-
     Sha1 {
         h0: word.mask32(st.h0 + s.a),
         h1: word.mask32(st.h1 + s.b),
         h2: word.mask32(st.h2 + s.c),
         h3: word.mask32(st.h3 + s.d),
         h4: word.mask32(st.h4 + s.e),
-        len: st.len
-    }
+        len: st.len }
 
 // A state with nothing absorbed (FIPS 180-4 §5.3.1).
 //

@@ -9,7 +9,6 @@
 // digest.  This one exists so that when they go red, the failure names
 // the piece that broke rather than the algorithm that used it.
 
-
 use std.test
 use std.bytes
 
@@ -24,7 +23,7 @@ fn hexb(h: Str) -> Bytes
 // their keys and data in.
 fn rep(n: Int, v: Int) -> Bytes
     var b = bytes.zeros(n)
-    for i in 0..n
+    for i in 0 .. n
         b = bytes.set_u8(b, i, v)
     b
 
@@ -43,7 +42,7 @@ fn test_rotr32_and_rotl32_are_inverses()
     test.assert_eq(word.rotr32(0x00000001, 1), 0x80000000)
     test.assert_eq(word.rotl32(0x80000000, 1), 0x00000001)
     test.assert_eq(word.rotr32(0xFFFFFFFF, 8), 0xFFFFFFFF)
-    for n in 1..32
+    for n in 1 .. 32
         test.assert_eq(word.rotl32(word.rotr32(0x12345678, n), n), 0x12345678)
 
 // `shr32` drops what it shifts off; `rotr32` brings it back round.
@@ -66,7 +65,7 @@ fn test_mask32_keeps_the_low_word()
 @test
 fn test_rotr64_round_trips()
     test.assert_eq(word.rotr64(1, 1), bits.shl(1, 63))
-    for n in 1..64
+    for n in 1 .. 64
         test.assert_eq(word.rotr64(word.rotr64(0x0123456789ABCDEF, n), 64 - n),
                        0x0123456789ABCDEF)
 
@@ -83,7 +82,7 @@ fn test_wadd64_wraps_where_plus_would_trap()
 @test
 fn test_block_readers_are_the_bytes_they_were_given()
     var buf = bytes.zeros(128)
-    for i in 0..128
+    for i in 0 .. 128
         buf = bytes.set_u8(buf, i, i)
     let be = digest.block_be32(buf, 0)
     test.assert_eq(be.w[0], 0x00010203)
@@ -180,7 +179,7 @@ fn test_ct_eq_answers_equality()
 @test
 fn test_ct_eq_sees_a_difference_at_every_position()
     let base = bytes.zeros(32)
-    for i in 0..32
+    for i in 0 .. 32
         test.assert_false(digest.ct_eq(base, bytes.set_u8(bytes.zeros(32), i, 1)),
                           "a difference is seen wherever it is")
 
@@ -200,18 +199,15 @@ fn test_compress_drives_the_cores_without_bytes()
     let a = sha256_core.compress(sha256_core.new(), blk)
     test.assert_eq(a.h0, 0xBA7816BF)
     test.assert_eq(a.h7, 0xF20015AD)
-
     let c = sha1_core.compress(sha1_core.new(), blk)
     test.assert_eq(c.h0, 0xA9993E36)
     test.assert_eq(c.h4, 0x9CD0D89D)
-
     // MD5 reads its block little-endian, so the same message is a
     // different set of words.
     let dblk = Block { w: [0x80636261, 0, 0, 0, 0, 0, 0, 0,
                            0, 0, 0, 0, 0, 0, 24, 0] }
     let d = md5_core.compress(md5_core.new(), dblk)
     test.assert_eq(d.a, 0x98500190)
-
     // SHA-512's block is 1024 bits, so "abc" pads into sixteen 64-bit
     // words rather than sixteen 32-bit ones.
     let bblk = Block { w: [0x6162638000000000, 0, 0, 0, 0, 0, 0, 0,

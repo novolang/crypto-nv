@@ -5,7 +5,6 @@
 //
 //   novo test tests/streaming_tests.nv
 
-
 use std.test
 use std.bytes
 
@@ -20,7 +19,7 @@ fn hexb(h: Str) -> Bytes
 // their keys and data in.
 fn rep(n: Int, v: Int) -> Bytes
     var b = bytes.zeros(n)
-    for i in 0..n
+    for i in 0 .. n
         b = bytes.set_u8(b, i, v)
     b
 
@@ -39,17 +38,15 @@ fn test_million_a_streamed_in_64k_chunks()
     let chunk = rep(65536, 0x61)
     let whole = 1000000 / 65536
     let rest = rep(1000000 - whole * 65536, 0x61)
-
     var s_sha256 = hashing.sha256_new()
     var s_sha512 = hashing.sha512_new()
     var s_sha1 = hashing.sha1_new()
     var s_md5 = hashing.md5_new()
-    for i in 0..whole
+    for i in 0 .. whole
         s_sha256 = hashing.sha256_update(s_sha256, chunk)
         s_sha512 = hashing.sha512_update(s_sha512, chunk)
         s_sha1 = hashing.sha1_update(s_sha1, chunk)
         s_md5 = hashing.md5_update(s_md5, chunk)
-
     test.assert_eq_str(
         bytes.to_hex(hashing.sha256_finish(s_sha256, rest, bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
         "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
@@ -73,7 +70,7 @@ fn test_million_a_streamed_in_64k_chunks()
 @test
 fn test_streamed_equals_one_shot_at_every_split()
     let msg = pat(1000)
-    for k in 0..16
+    for k in 0 .. 16
         let cut = k * 64
         let head = bytes.slice(msg, 0, cut)
         let tail = bytes.slice(msg, cut, 1000)
@@ -89,7 +86,7 @@ fn test_streamed_equals_one_shot_at_every_split()
             bytes.to_hex(hashing.md5_finish(hashing.md5_update(hashing.md5_new(), head), tail,
                                    bytes.zeros(hashing.MD5_DIGEST_BYTES))),
             bytes.to_hex(hashing.md5(msg)))
-    for k in 0..8
+    for k in 0 .. 8
         let cut = k * 128
         let head = bytes.slice(msg, 0, cut)
         let tail = bytes.slice(msg, cut, 1000)
@@ -115,6 +112,6 @@ fn test_update_counts_only_whole_blocks()
 // `n` bytes of `i mod 251`.
 fn pat(n: Int) -> Bytes
     var b = bytes.zeros(n)
-    for i in 0..n
+    for i in 0 .. n
         b = bytes.set_u8(b, i, i % 251)
     b
