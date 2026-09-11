@@ -55,29 +55,29 @@ struct Working512
 // no mask is needed, since the whole word is the value.
 @tier(embedded)
 fn ch(x: Int, y: Int, z: Int) -> Int
-    bits.xor(bits.band(x, y), bits.band(bits.bnot(x), z))
+    (x & y) ^ (~x & z)
 
 @tier(embedded)
 fn maj(x: Int, y: Int, z: Int) -> Int
-    bits.xor(bits.xor(bits.band(x, y), bits.band(x, z)), bits.band(y, z))
+    (x & y) ^ (x & z) ^ (y & z)
 
 // The four rotation functions of FIPS 180-4 §4.1.3 — the same shapes
 // as §4.1.2 with the wider rotation amounts.
 @tier(embedded)
 fn big_sigma0(x: Int) -> Int
-    bits.xor(bits.xor(word.rotr64(x, 28), word.rotr64(x, 34)), word.rotr64(x, 39))
+    word.rotr64(x, 28) ^ word.rotr64(x, 34) ^ word.rotr64(x, 39)
 
 @tier(embedded)
 fn big_sigma1(x: Int) -> Int
-    bits.xor(bits.xor(word.rotr64(x, 14), word.rotr64(x, 18)), word.rotr64(x, 41))
+    word.rotr64(x, 14) ^ word.rotr64(x, 18) ^ word.rotr64(x, 41)
 
 @tier(embedded)
 fn small_sigma0(x: Int) -> Int
-    bits.xor(bits.xor(word.rotr64(x, 1), word.rotr64(x, 8)), bits.shr(x, 7))
+    word.rotr64(x, 1) ^ word.rotr64(x, 8) ^ (x >>> 7)
 
 @tier(embedded)
 fn small_sigma1(x: Int) -> Int
-    bits.xor(bits.xor(word.rotr64(x, 19), word.rotr64(x, 61)), bits.shr(x, 6))
+    word.rotr64(x, 19) ^ word.rotr64(x, 61) ^ (x >>> 6)
 
 // One round (FIPS 180-4 §6.4.2 step 3).
 //

@@ -123,7 +123,7 @@ pub fn pad_byte(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, i: In
     else if i < plen - 8
         0
     else
-        bits.band(bits.shr(bit_len, 8 * (plen - 1 - i)), 0xFF)
+        (bit_len >>> (8 * (plen - 1 - i))) & 0xFF
 
 // The byte at position `i` of an MD5 padded block group.
 //
@@ -133,22 +133,20 @@ pub fn pad_byte_le(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, i:
     if i < plen - 8
         pad_byte(tail, base, rem, plen, bit_len, i)
     else
-        bits.band(bits.shr(bit_len, 8 * (i - (plen - 8))), 0xFF)
+        (bit_len >>> (8 * (i - (plen - 8)))) & 0xFF
 
 // One big-endian 32-bit word of the padded block group, at word `k`.
 pub fn pad_word_be32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, k: Int) -> Int
     var v = 0
-    for j in 0 .. 4
-        v = bits.bor(bits.shl(v, 8),
-                     pad_byte(tail, base, rem, plen, bit_len, k * 4 + j))
+    for j in 0..4
+        v = (v << 8) | pad_byte(tail, base, rem, plen, bit_len, k * 4 + j)
     v
 
 // One little-endian 32-bit word of the padded block group, at word `k`.
 pub fn pad_word_le32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, k: Int) -> Int
     var v = 0
-    for j in 0 .. 4
-        v = bits.bor(bits.shl(v, 8),
-                     pad_byte_le(tail, base, rem, plen, bit_len, k * 4 + 3 - j))
+    for j in 0..4
+        v = (v << 8) | pad_byte_le(tail, base, rem, plen, bit_len, k * 4 + 3 - j)
     v
 
 // One big-endian 64-bit word of the padded block group, at word `k`.
@@ -160,15 +158,15 @@ pub fn pad_word_le32(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, 
 // `plen - 1` and its first at `plen - 8`.
 pub fn pad_word_be64(tail: Bytes, base: Int, rem: Int, plen: Int, bit_len: Int, k: Int) -> Int
     var v = 0
-    for j in 0 .. 8
+    for j in 0..8
         let i = k * 8 + j
         let b = if i < plen - 16
             pad_byte(tail, base, rem, plen, 0, i)
         else if i < plen - 8
             0
         else
-            bits.band(bits.shr(bit_len, 8 * (plen - 1 - i)), 0xFF)
-        v = bits.bor(bits.shl(v, 8), b)
+            (bit_len >>> (8 * (plen - 1 - i))) & 0xFF
+        v = (v << 8) | b
     v
 
 // The padded final block group as a big-endian 32-bit block, at block
@@ -256,8 +254,8 @@ pub fn pad_blocks(rem: Int, block: Int, lenf: Int) -> Int
 // takes the block length rather than choosing one.
 pub fn hmac_pad_block(key: Bytes, block_bytes: Int, pad: Int) -> Bytes
     var b = bytes.zeros(block_bytes)
-    for i in 0 .. block_bytes
-        b = bytes.set_u8(b, i, bits.xor(bytes.byte_at(key, i) ?? 0, pad))
+    for i in 0..block_bytes
+        b = bytes.set_u8(b, i, (bytes.byte_at(key, i) ?? 0) ^ pad)
     b
 
 // Compare two digests or tags without leaking WHERE they differ.
@@ -288,7 +286,6 @@ pub fn ct_eq(a: Bytes, b: Bytes) -> Bool
         false
     else
         var diff = 0
-        for i in 0 .. n
-            diff = bits.bor(diff, bits.xor(bytes.byte_at(a, i) ?? 0,
-                                           bytes.byte_at(b, i) ?? 0))
+        for i in 0..n
+            diff = diff | ((bytes.byte_at(a, i) ?? 0) ^ (bytes.byte_at(b, i) ?? 0))
         diff == 0

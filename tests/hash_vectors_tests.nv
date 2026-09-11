@@ -26,7 +26,7 @@ fn hexb(h: Str) -> Bytes
 // their keys and data in.
 fn rep(n: Int, v: Int) -> Bytes
     var b = bytes.zeros(n)
-    for i in 0 .. n
+    for i in 0..n
         b = bytes.set_u8(b, i, v)
     b
 

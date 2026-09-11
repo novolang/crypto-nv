@@ -66,30 +66,30 @@ struct Working256
 // not (FIPS 180-4 §4.1.2).
 @tier(embedded)
 fn ch(x: Int, y: Int, z: Int) -> Int
-    bits.xor(bits.band(x, y), bits.band(word.mask32(bits.bnot(x)), z))
+    (x & y) ^ (word.mask32(~x) & z)
 
 // Maj — the bit the majority of the three agree on (§4.1.2).
 @tier(embedded)
 fn maj(x: Int, y: Int, z: Int) -> Int
-    bits.xor(bits.xor(bits.band(x, y), bits.band(x, z)), bits.band(y, z))
+    (x & y) ^ (x & z) ^ (y & z)
 
 // The four rotation functions of §4.1.2, in the order the standard
 // names them.
 @tier(embedded)
 fn big_sigma0(x: Int) -> Int
-    bits.xor(bits.xor(word.rotr32(x, 2), word.rotr32(x, 13)), word.rotr32(x, 22))
+    word.rotr32(x, 2) ^ word.rotr32(x, 13) ^ word.rotr32(x, 22)
 
 @tier(embedded)
 fn big_sigma1(x: Int) -> Int
-    bits.xor(bits.xor(word.rotr32(x, 6), word.rotr32(x, 11)), word.rotr32(x, 25))
+    word.rotr32(x, 6) ^ word.rotr32(x, 11) ^ word.rotr32(x, 25)
 
 @tier(embedded)
 fn small_sigma0(x: Int) -> Int
-    bits.xor(bits.xor(word.rotr32(x, 7), word.rotr32(x, 18)), word.shr32(x, 3))
+    word.rotr32(x, 7) ^ word.rotr32(x, 18) ^ word.shr32(x, 3)
 
 @tier(embedded)
 fn small_sigma1(x: Int) -> Int
-    bits.xor(bits.xor(word.rotr32(x, 17), word.rotr32(x, 19)), word.shr32(x, 10))
+    word.rotr32(x, 17) ^ word.rotr32(x, 19) ^ word.shr32(x, 10)
 
 // One round (FIPS 180-4 §6.2.2 step 3).
 //

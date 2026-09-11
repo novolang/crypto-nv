@@ -24,7 +24,7 @@ fn hexb(h: Str) -> Bytes
 // their keys and data in.
 fn rep(n: Int, v: Int) -> Bytes
     var b = bytes.zeros(n)
-    for i in 0 .. n
+    for i in 0..n
         b = bytes.set_u8(b, i, v)
     b
 
@@ -258,51 +258,51 @@ fn test_hmac_md5_rfc_vectors()
 @test
 fn test_hmac_key_length_boundary()
     // sha256, a 63-byte key against a 64-byte block
-    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e"), "boundary",
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e"), bytes.from_str("boundary"),
                                             bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
                        "5b3b28939f062233edd3b78c7984acc50bdb173013a53a3175a1b667dd4cdae0")
     // sha256, a 64-byte key against a 64-byte block
-    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"), "boundary",
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"), bytes.from_str("boundary"),
                                             bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
                        "04660fc313657aa3500078e1f2788cc4e328654092b137f946516e4d7a17adae")
     // sha256, a 65-byte key against a 64-byte block
-    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"), "boundary",
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha256(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"), bytes.from_str("boundary"),
                                             bytes.zeros(hashing.SHA256_DIGEST_BYTES))),
                        "ea8a9678017bce7c50df43ced20cc4b112ed884969720bb2ec14e24ce582f037")
     // sha512, a 127-byte key against a 128-byte block
-    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e"), "boundary",
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e"), bytes.from_str("boundary"),
                                             bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
                        "2e8adbf53ecfd6ef08cbd4def91bcad5de092d9399c828c3a95f9b47f88c79cb84a73743a067c7efea33d08a4d2206469719eb42dfaf022d9bed4f5102ef2142")
     // sha512, a 128-byte key against a 128-byte block
-    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f"), "boundary",
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f"), bytes.from_str("boundary"),
                                             bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
                        "8d0602513370bc0e39e1f240561d6008133dca85a61ea37dc77038b9717f4c40256b6d36faea0a7dbaec2a003283314a23104bbd16ce90f27bf8e00874025e81")
     // sha512, a 129-byte key against a 128-byte block
-    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80"), "boundary",
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha512(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80"), bytes.from_str("boundary"),
                                             bytes.zeros(hashing.SHA512_DIGEST_BYTES))),
                        "003d6eea77321771113ce0d069fa33932df4481817e12c570a2a58db52ee70a007db59c100b5b48b2462834191320396551a232fe13b1ed7938d5aead1b5ee2f")
     // sha1, a 63-byte key against a 64-byte block
-    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e"), "boundary",
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e"), bytes.from_str("boundary"),
                                             bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
                        "cf951930abe7b08be6b1dc525a02735d4be210d6")
     // sha1, a 64-byte key against a 64-byte block
-    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"), "boundary",
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"), bytes.from_str("boundary"),
                                             bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
                        "f367a5da016833fe0c0883bbb5fd86e15393b9d9")
     // sha1, a 65-byte key against a 64-byte block
-    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"), "boundary",
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_sha1(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"), bytes.from_str("boundary"),
                                             bytes.zeros(hashing.SHA1_DIGEST_BYTES))),
                        "257c964f6bcd5e331ac048e3695dc64cb38a71ac")
     // md5, a 63-byte key against a 64-byte block
-    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e"), "boundary",
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e"), bytes.from_str("boundary"),
                                             bytes.zeros(hashing.MD5_DIGEST_BYTES))),
                        "8291ae7287bbd3d63de5995c1765f2dd")
     // md5, a 64-byte key against a 64-byte block
-    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"), "boundary",
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"), bytes.from_str("boundary"),
                                             bytes.zeros(hashing.MD5_DIGEST_BYTES))),
                        "dd3b606e649e94548e747abdef13bd25")
     // md5, a 65-byte key against a 64-byte block
-    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"), "boundary",
+    test.assert_eq_str(bytes.to_hex(hashing.hmac_md5(hexb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40"), bytes.from_str("boundary"),
                                             bytes.zeros(hashing.MD5_DIGEST_BYTES))),
                        "364037b6db60f0b64703057c88793d0a")
 
@@ -310,9 +310,9 @@ fn test_hmac_key_length_boundary()
 // comparison callers are told to use.
 @test
 fn test_hmac_tag_compares_constant_time()
-    let tag = hashing.hmac_sha256("k", "m", bytes.zeros(hashing.SHA256_DIGEST_BYTES))
-    let same = hashing.hmac_sha256("k", "m", bytes.zeros(hashing.SHA256_DIGEST_BYTES))
-    let other = hashing.hmac_sha256("k", "m!", bytes.zeros(hashing.SHA256_DIGEST_BYTES))
+    let tag = hashing.hmac_sha256(bytes.from_str("k"), bytes.from_str("m"), bytes.zeros(hashing.SHA256_DIGEST_BYTES))
+    let same = hashing.hmac_sha256(bytes.from_str("k"), bytes.from_str("m"), bytes.zeros(hashing.SHA256_DIGEST_BYTES))
+    let other = hashing.hmac_sha256(bytes.from_str("k"), bytes.from_str("m!"), bytes.zeros(hashing.SHA256_DIGEST_BYTES))
     test.assert_true(digest.ct_eq(tag, same), "equal tags compare equal")
     test.assert_false(digest.ct_eq(tag, other), "different tags do not")
     test.assert_false(digest.ct_eq(tag, bytes.slice(tag, 0, 16)),

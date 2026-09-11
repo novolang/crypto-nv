@@ -24,10 +24,11 @@ use std.bytes
 use hashing
 
 fn main() [io]
-    println(bytes.to_hex(hashing.sha256("abc")))
+    println(bytes.to_hex(hashing.sha256(bytes.from_str("abc"))))
     // ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 
-    let tag = hashing.hmac_sha256("key", "message",
+    let tag = hashing.hmac_sha256(bytes.from_str("key"),
+                                  bytes.from_str("message"),
                                   bytes.zeros(hashing.SHA256_DIGEST_BYTES))
     println(bytes.to_hex(tag))
 ```

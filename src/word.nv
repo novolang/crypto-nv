@@ -56,7 +56,7 @@ struct Block
 // ```
 pub @tier(embedded)
 fn mask32(x: Int) -> Int
-    bits.band(x, 0xFFFFFFFF)
+    x & 0xFFFFFFFF
 
 // Rotate a 32-bit word right by `n` bits, for `n` in 1..31.
 //
@@ -65,7 +65,7 @@ fn mask32(x: Int) -> Int
 // the standard that defines it.
 pub @tier(embedded)
 fn rotr32(x: Int, n: Int) -> Int
-    mask32(bits.bor(bits.shr(mask32(x), n), bits.shl(x, 32 - n)))
+    mask32((mask32(x) >>> n) | (x << (32 - n)))
 
 // Rotate a 32-bit word left by `n` bits, for `n` in 1..31.
 //
@@ -83,7 +83,7 @@ fn rotl32(x: Int, n: Int) -> Int
 // logical shift, so the mask is the whole of what this adds.
 pub @tier(embedded)
 fn shr32(x: Int, n: Int) -> Int
-    bits.shr(mask32(x), n)
+    mask32(x) >>> n
 
 // Rotate a 64-bit word right by `n` bits, for `n` in 1..63.
 //
@@ -93,7 +93,7 @@ fn shr32(x: Int, n: Int) -> Int
 // halves meet cleanly.
 pub @tier(embedded)
 fn rotr64(x: Int, n: Int) -> Int
-    bits.bor(bits.shr(x, n), bits.shl(x, 64 - n))
+    (x >>> n) | (x << (64 - n))
 
 // Add two 64-bit words modulo 2^64.
 //

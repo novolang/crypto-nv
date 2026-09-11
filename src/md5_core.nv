@@ -37,19 +37,19 @@ struct Md5
 // The four auxiliary functions of RFC 1321 §3.4, one per round block.
 @tier(embedded)
 fn f_fn(x: Int, y: Int, z: Int) -> Int
-    bits.bor(bits.band(x, y), bits.band(word.mask32(bits.bnot(x)), z))
+    (x & y) | (word.mask32(~x) & z)
 
 @tier(embedded)
 fn g_fn(x: Int, y: Int, z: Int) -> Int
-    bits.bor(bits.band(x, z), bits.band(y, word.mask32(bits.bnot(z))))
+    (x & z) | (y & word.mask32(~z))
 
 @tier(embedded)
 fn h_fn(x: Int, y: Int, z: Int) -> Int
-    bits.xor(bits.xor(x, y), z)
+    x ^ y ^ z
 
 @tier(embedded)
 fn i_fn(x: Int, y: Int, z: Int) -> Int
-    bits.xor(y, bits.bor(x, word.mask32(bits.bnot(z))))
+    y ^ (x | word.mask32(~z))
 
 // One round.
 //
