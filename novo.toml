@@ -1,6 +1,6 @@
 [package]
 name        = "crypto-nv"
-version     = "0.1.2"
+version     = "0.1.3"
 description = "Cryptographic hashes and HMAC in pure Novo: SHA-256, SHA-512, and SHA-1 and MD5 for reading formats that still specify them.  The digest state is a @value struct, so a hash runs on the stack with the heap untouched."
 license     = "Apache-2.0"
 stability   = "experimental"

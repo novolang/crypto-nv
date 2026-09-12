@@ -4,6 +4,10 @@ Every published version, newest first. This file is on the publish
 allow-list, so it travels with the package: it is the only thing a
 consumer deciding whether to upgrade can read.
 
+## 0.1.3 — 2026-09-12
+
+### Changed — The README is rewritten in plain technical-writer prose; no signature changed.
+
 ## 0.1.2 — 2026-09-12
 
 - **The documented examples compile again.**  Every hashing entry point takes a `Bytes`, and the examples handed it a `Str` literal.  A `Str` is no longer accepted where a `Bytes` is declared, so each example now spells the conversion: `hashing.sha256(bytes.from_str("abc"))`.  Twelve examples across `hashing` and the README.  No signature changed and no behaviour changed — only the examples.

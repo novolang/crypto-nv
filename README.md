@@ -1,23 +1,52 @@
 # crypto-nv
 
-Cryptographic hashes and HMAC, written in Novo and depending on
-nothing. SHA-256 and SHA-512 for work you are starting today; SHA-1 and
-MD5 because Git object names, old TLS suites and half the package
-indexes on the internet still publish them, and reading those needs an
-implementation rather than an opinion.
+A cryptographic hash turns a message of any length into a short, fixed-length
+digest. A message authentication code (MAC) does the same under a secret key, so
+that only a holder of the key can produce or check the value. This package
+implements four hashes and the HMAC construction over them, in novo-lang, with
+no dependencies.
 
-What makes it worth having beside `std.crypto` — which is OpenSSL, and
-faster — is where it runs and what it costs. The digest state is a
-`@value` struct, so it lives on the stack or in `.bss` with no heap
-cell and no reference count, and the compression functions allocate
-nothing at all: they are checked at `@tier(embedded)` on every build
-and cross-compiled to a Cortex-M4 on every test run. `std.crypto` is
-host-only, `Str`-shaped and one-shot. This is the one you can put in
-firmware, or on a hot path you have promised will not allocate.
+| Algorithm | Specification | Digest | Block |
+| --- | --- | --- | --- |
+| SHA-256 | [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final) | 32 bytes | 64 bytes |
+| SHA-512 | FIPS 180-4 | 64 bytes | 128 bytes |
+| SHA-1 | FIPS 180-4 | 20 bytes | 64 bytes |
+| MD5 | [RFC 1321](https://www.rfc-editor.org/rfc/rfc1321) | 16 bytes | 64 bytes |
+| HMAC over any of them | [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104) | the hash's digest | — |
+
+SHA-256 and SHA-512 are for work you are starting today. SHA-1 and MD5 are here
+because Git object names, old TLS suites and half the package indexes on the
+internet still publish them, and reading those needs an implementation.
+
+Two other packages on the registry are defined in terms of this one:
+[hkdf-nv](https://novo-lang.org/packages/hkdf-nv), whose key derivation is a
+chain of HMACs, and any caller of
+[blake2-nv](https://novo-lang.org/packages/blake2-nv) that needs a constant-time
+digest comparison, which lives here as `digest.ct_eq`.
+
+## What it is for
+
+novo-lang's standard library already has `std.crypto`, which is OpenSSL and is
+faster. The difference is where this package runs and what it costs.
+
+The digest state is a `@value` struct. It lives on the caller's stack or in
+`.bss`, with no heap cell and no reference count. The compression functions
+allocate nothing at all, and the modules that hold them are declared to build
+for a microcontroller with no heap allocator: every build type-checks them
+against that restriction, and every test run cross-compiles them for a
+Cortex-M4. `std.crypto`, by contrast, runs only on a host, takes `Str`, and
+offers only the one-shot form.
+
+This is therefore the implementation to put in firmware, or on a code path you
+have promised will not allocate.
+
+## Install
 
 ```
 novo pkg add crypto-nv
 ```
+
+## Example
 
 ```novo
 use std.bytes
@@ -33,19 +62,34 @@ fn main() [io]
     println(bytes.to_hex(tag))
 ```
 
+Build and test with:
+
 ```bash
 novo pkg build                       # the package compiles
 novo test tests                      # 34 tests: the published vectors, and more
 ```
 
-## The two shapes
+## What the package contains
 
-Every hash has a **one-shot** form and a **streaming** one, and the
-streaming form is the real one — the other is it plus an allocation.
+| Module | Contents |
+| --- | --- |
+| `word` | The word algebra shared by all four hashes: masks, rotations and the wrapping 64-bit add, and the `Block` type. Builds for a microcontroller. |
+| `sha256_core`, `sha512_core`, `sha1_core`, `md5_core` | One hash each, at the lowest level: the state as a plain value, `new`, and the compression function. Each imports only `word`. Builds for a microcontroller. |
+| `digest` | The pieces that need `Bytes`: reading a block out of a buffer, the padding rules, and the constant-time comparison `ct_eq`. Host only. |
+| `hashing` | The interface most programs call: one-shot digests, the streaming form, HMAC, and the digest and block length constants, for all four hashes. Host only. |
+
+## How to choose an entry point
+
+Every hash has a **one-shot** form and a **streaming** form.
+
+The one-shot form is a single call that allocates the result buffer for you.
 
 ```novo
 let d = hashing.sha256(data)                       // one call, one allocation
 ```
+
+The streaming form allocates nothing. Start a state, absorb the message in
+pieces, then finish into a buffer you own.
 
 ```novo
 var st = hashing.sha256_new()                      // nothing allocated
@@ -54,34 +98,37 @@ for chunk in block_aligned_chunks
 let d = hashing.sha256_finish(st, whatever_is_left, out)
 ```
 
-`finish` writes into a buffer **you** own and hands it back, so hashing
-a thousand messages needs one 32-byte buffer rather than a thousand.
+`finish` writes into a buffer you own and hands it back, so hashing a thousand
+messages needs one 32-byte buffer rather than a thousand.
 
-**`update` absorbs whole blocks only.** The state carries no partial
-block — that is exactly what keeps it nine inline words with nothing to
-own — so bytes past the last whole block are left unabsorbed, and
-`finish` takes any length. In practice this costs a caller nothing: any
-I/O buffer size that is a multiple of 128 satisfies all four hashes at
-once, and 4096, 8192 and 65536 all are. If your chunks are irregular,
-hand each one to `finish` on a fresh state, or buffer them yourself.
+**Firmware calls a `*_core` module directly.** Those modules use no `Bytes`, no
+strings and no lists, so they compile for a device with no heap. See "Running on
+a microcontroller".
 
-## Comparing tags
+## The rules a user needs
 
-```novo
-if digest.ct_eq(expected, received)
-```
+1. **`update` absorbs whole blocks only.** The state carries no partial block,
+   which is what keeps it nine inline words with nothing to own. Bytes past the
+   last whole block are left unabsorbed. `finish` takes any length, so the
+   remainder goes there.
+2. **Any chunk size that is a multiple of 128 satisfies all four hashes at
+   once.** 4096, 8192 and 65536 all are. If your chunks are irregular, hand each
+   one to `finish` on a fresh state, or buffer them yourself.
+3. **Compare tags with `digest.ct_eq`, never with `==`.** See "Timing
+   behaviour".
+4. **`compress` takes a `Block`, which is sixteen words, not a buffer.** You
+   already have the bytes somewhere, and turning sixteen of them into words is
+   arithmetic. This is what lets the core modules need no allocator.
+5. **SHA-1 and MD5 are for reading formats that specify them, not for securing
+   new ones.** Both are broken for collision resistance, MD5 catastrophically
+   and SHA-1 thoroughly. Their documentation comments say so at more length.
 
-Never `==`. `==` stops at the first differing byte and the time it took
-says how many bytes matched, which is enough to forge a tag one byte at
-a time. `ct_eq` reads both buffers whole and folds every difference into
-one accumulator, so the work depends on the lengths and never on the
-contents.
+## Running on a microcontroller
 
-## On a device
-
-The compression cores import `word` and nothing else. No `Bytes`, no
-lists, no strings — none of which the embedded surface admits — so they
-cross-compile on their own:
+novo-lang lets a package state which of its modules can run on a device with no
+heap allocator, and the compiler checks that claim on every build. Here the
+claim covers `word` and the four `*_core` modules. They contain only integer
+arithmetic over fixed-size values.
 
 ```novo
 use word
@@ -96,79 +143,76 @@ fn main() [hw]
 novo build --target=nrf52-qemu src/main.nv
 ```
 
-`compress` takes a `Block` — sixteen words — rather than a buffer,
-which is why it needs no allocator: you already have the bytes
-somewhere, and turning sixteen of them into words is arithmetic. The
-`Bytes` half of the package (`hashing`, `digest`) stays on the host;
-it is a separate module for exactly this reason, since one host-only
-function anywhere in a compilation unit is an undefined symbol at
-embedded link time whether or not the firmware ever calls it.
+The `Bytes` half of the package, `hashing` and `digest`, stays on the host. It
+is a separate module for exactly this reason: one host-only function anywhere in
+a compilation unit is an undefined symbol at link time on the device, whether or
+not the firmware ever calls it.
 
 ## What it costs
 
-Measured on the emitted LLVM, and asserted by the test suite: **63 core
-functions, zero `novo_alloc` calls.** The compression functions, the
-word algebra, the padding and `update` and `finish` allocate nothing;
-the only functions here that touch the heap are `hashing.<alg>` and
-`hashing.hmac_<alg>`, which allocate the result buffer they hand back,
-and `hmac` two block-sized scratch buffers besides.
+Measured on the emitted LLVM and asserted by the test suite: **63 core
+functions, zero `novo_alloc` calls.** The compression functions, the word
+algebra, the padding, `update` and `finish` allocate nothing. The only functions
+here that touch the heap are `hashing.<alg>` and `hashing.hmac_<alg>`, which
+allocate the result buffer they hand back, and HMAC two block-sized scratch
+buffers besides.
 
-The state is nine `Int` fields — eight chaining words and a byte count
-— laid out inline. Copying one costs those nine words; there is no
-cell, no header, no reference count and nothing to drop.
+The state is nine `Int` fields: eight chaining words and a byte count, laid out
+inline. Copying one costs those nine words. There is no cell, no header, no
+reference count and nothing to drop.
 
-## What it deliberately is not
+## Timing behaviour
 
-- **It is not constant-time as a whole.** `ct_eq` is. The hashes are
-  not, and they do not need to be: their input is the message, which
-  is not the secret. HMAC's key-dependent work is the same table-free
-  arithmetic on every input, but no claim beyond that is made here and
-  none should be relied on.
-- **It is not fast.** It is written to be read against the standard
-  that defines it — the message schedule and the rounds are spelled
-  out, one line each, so a reader can check them line by line. Where
-  throughput matters and a heap is available, `std.crypto` is OpenSSL.
-- **SHA-1 and MD5 are here to read old formats, not to secure new
-  ones.** Both are broken for collision resistance — MD5 catastrophically,
-  SHA-1 thoroughly — and their doc comments say so at more length.
-- **No ciphers and no signatures.** AES-GCM, ChaCha20-Poly1305 and
-  signatures are a later slice. This one is hashes and HMAC.
+- **`digest.ct_eq` is constant-time.** It reads both buffers whole and folds
+  every difference into one accumulator, so the work depends on the lengths and
+  never on the contents. A tag must be checked with it. `==` stops at the first
+  differing byte, and the time it took says how many bytes matched, which is
+  enough to forge a tag one byte at a time.
+- **The hashes are not constant-time, and do not need to be.** Their input is
+  the message, which is not the secret.
+- **HMAC's key-dependent work is the same table-free arithmetic on every
+  input.** No claim beyond that is made here, and none should be relied on.
 
-## What it cannot do yet
+## What is not included
 
-**The state cannot buffer a partial block**, which is why `update`
-takes whole blocks. A `@value` struct's inline `[T; N]` array cannot be
-written into and has no functional-update form (SPEC §14.3), so a
-64-byte scratch buffer inside the state would have to be respelled
-element by element on every byte. When value-typed fixed-capacity
-storage lands, `update` can take any length and the contract in this
-README goes away without changing a signature.
+- **Ciphers and signatures.** AES-GCM, ChaCha20-Poly1305 and signature schemes
+  are separate packages. This one is hashes and HMAC.
+- **Speed.** The code is written to be read against the standard that defines
+  it: the message schedule and the rounds are spelled out one line each, so a
+  reader can check them against the specification line by line. Where throughput
+  matters and a heap is available, `std.crypto` is OpenSSL.
+- **A partial-block buffer inside the state.** This is why `update` takes whole
+  blocks. A `@value` struct's inline `[T; N]` array cannot be written into and
+  has no functional-update form (SPEC section 14.3), so a 64-byte scratch buffer
+  inside the state would have to be respelled element by element on every byte.
+  When value-typed fixed-capacity storage lands, `update` will take any length
+  and this restriction goes away without any signature changing.
+- **An `[alloc]` effect on the functions that allocate.** The language has no
+  such effect yet, so `hashing.sha256` and `hashing.sha256_update` both declare
+  the empty effect list `[]` even though one of them allocates. When the effect
+  exists, the one-shot wrappers will carry it and the split described above
+  becomes machine-checkable.
+- **A BLAKE hash.** [blake2-nv](https://novo-lang.org/packages/blake2-nv) is the
+  package for BLAKE2.
 
-**The effect rows say `[]`, not `[alloc]`.** The allocation discipline
-the memory model designs — a function that may reach the arena says so
-in its row — is not in the language yet, so `hashing.sha256` and
-`hashing.sha256_update` carry the same empty row despite one of them
-allocating. When the effect exists, the convenience wrappers take it
-and the split this README describes in prose becomes checkable.
+## Related packages
+
+- [blake2-nv](https://novo-lang.org/packages/blake2-nv) is BLAKE2b and BLAKE2s.
+  A keyed BLAKE2 is a MAC in its own right and needs no HMAC wrapper. It depends
+  on nothing, so a device that needs only a hash need not link this package as
+  well.
+- [hkdf-nv](https://novo-lang.org/packages/hkdf-nv) derives many keys from one
+  secret. It is defined over the HMAC published here.
+- `std.crypto` in the standard library is OpenSSL: faster, host only, `Str`
+  shaped, one-shot only.
 
 ## The reference
 
-Every public function, its signature, its effect row and a worked
-example of each entry point are on
-[the package's page](https://novo-lang.org/packages/crypto-nv),
-generated from these sources at every publish. A list of names here
-would be a second original, and the second original is the one that
-goes stale.
-
-## The layout
-
-| Path | |
-|---|---|
-| `src/word.nv` | the word algebra — masks, rotates, the wrapping 64-bit add — and `Block`. Embedded |
-| `src/sha256_core.nv`, `sha512_core.nv`, `sha1_core.nv`, `md5_core.nv` | the state, `new`, and the compression function. Embedded, and importing only `word` |
-| `src/digest.nv` | `Bytes` to `Block`, the padding, `ct_eq`. Host |
-| `src/hashing.nv` | the host API for all four: streaming, one-shot, HMAC |
-| `tests/` | the published vectors, the boundaries, the probes the suite compiles |
+Every public function, its signature, its declared effects and a worked example
+of each entry point are on
+[the package's page](https://novo-lang.org/packages/crypto-nv), generated from
+these sources at every publish. Listing the names here as well would be a second
+original, and the second original is the one that goes stale.
 
 ## Tests
 
@@ -180,12 +224,30 @@ novo test tests/streaming_tests.nv          # a million bytes, streamed
 novo test tests/word_tests.nv               # the pieces, one at a time
 ```
 
-The expected digests are the ones FIPS 180-4, RFC 6234, RFC 1321,
-RFC 4231 and RFC 2202 publish, checked against OpenSSL before they were
-written down — which is what makes them evidence about this
-implementation rather than about whoever typed them. The round
-constants are generated from the square roots, cube roots and sines
-that define them, never transcribed.
+The expected digests are the ones FIPS 180-4, RFC 6234, RFC 1321, RFC 4231 and
+RFC 2202 publish, checked against OpenSSL before they were written down, which
+is what makes them evidence about this implementation rather than about whoever
+typed them. The round constants are generated from the square roots, cube roots
+and sines that define them, never transcribed.
+
+`tests/alloc_probe.nv` and `tests/embedded_probe.nv` are the two probes the
+suite compiles: the first asserts the allocation count above, the second builds
+the core modules for the device target.
+
+## Implementation status
+
+Everything listed here is implemented and passing.
+
+| Item | Implemented |
+| --- | --- |
+| `hashing.sha256`, `.sha512`, `.sha1`, `.md5` | yes |
+| `hashing.<alg>_new`, `_update`, `_finish`, for all four | yes |
+| `hashing.hmac_sha256`, `.hmac_sha512`, `.hmac_sha1`, `.hmac_md5` | yes |
+| The eight digest and block length constants | yes |
+| `digest.ct_eq` | yes |
+| `digest`'s block readers and padding functions | yes |
+| `sha256_core`, `sha512_core`, `sha1_core`, `md5_core`: the state, `new`, `compress` | yes |
+| `word`: the masks, rotations, wrapping add and `Block` | yes |
 
 ## Licence
 
